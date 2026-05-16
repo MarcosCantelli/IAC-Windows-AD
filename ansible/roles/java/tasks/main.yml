@@ -1,0 +1,36 @@
+---
+- name: Garantir que o diretório D:\Programas existe
+  win_file:
+    path: 'D:\Programas'
+    state: directory
+
+- name: Instalar OpenJDK 21 no D:\Programas
+  win_chocolatey:
+    name: openjdk21
+    state: present
+    install_args: "INSTALLDIR=D:\\Programas\\jdk-21"
+
+- name: Instalar Maven no D:\Programas
+  win_chocolatey:
+    name: maven
+    state: present
+    install_args: "INSTALLDIR=D:\\Programas\\maven"
+
+- name: Configurar a variavel de ambiente JAVA_HOME
+  win_environment:
+    name: JAVA_HOME
+    value: 'D:\Programas\jdk-21'
+    level: machine
+
+- name: Configurar a variavel de ambiente M2_HOME
+  win_environment:
+    name: M2_HOME
+    value: 'D:\Programas\maven'
+    level: machine
+
+- name: Adicionar Java e Maven ao PATH do Sistema
+  win_path:
+    elements:
+      - 'D:\Programas\jdk-21\bin'
+      - 'D:\Programas\maven\bin'
+    state: present

@@ -1,0 +1,13 @@
+---
+- name: Instalar Node.js versao 20.19.5 no D:\Programas
+  win_chocolatey:
+    name: nodejs-lts
+    version: '20.19.5'
+    state: present
+    install_args: "INSTALLDIR=D:\\Programas\\nodejs"
+
+- name: Adicionar Node.js ao PATH do Sistema
+  win_path:
+    elements:
+      - 'D:\Programas\nodejs'
+    state: present
