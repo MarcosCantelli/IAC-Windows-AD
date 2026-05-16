@@ -51,7 +51,7 @@ variable "template_name" {
 }
 
 variable "vm_name" {
-  description = "Nome da Máquina Virtual"
+  description = "Nome base da Máquina Virtual"
   type        = string
 }
 
@@ -69,4 +69,10 @@ variable "disk_d_size_gb" {
   description = "Tamanho do disco D: em GB para Programas"
   type        = number
   default     = 50
+}
+
+variable "vm_count" {
+  description = "Quantidade de VMs Windows a serem criadas"
+  type        = number
+  default     = 1
 }

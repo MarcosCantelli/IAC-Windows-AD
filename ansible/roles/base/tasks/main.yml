@@ -1,12 +1,32 @@
 ---
-- name: Instalar pacotes essenciais
-  apt:
-    name:
-      - cifs-utils
-      - curl
-      - wget
-      - unzip
-      - git
-      - xz-utils
-      - ca-certificates
+# 1. Detectar, inicializar, criar partição e formatar o segundo disco como D:\
+- name: Garantir que o segundo disco esta online e formatado como D:\
+  win_disk_management:
+    disk_number: 1
+    letter: D
+    partition_style: gpt
+    fs_type: ntfs
+    partition_size: -1 # Utiliza todo o espaço disponível alocado no vSphere
+    state: present
+
+# 2. Criar a estrutura de diretórios necessária no disco secundário
+- name: Criar o diretorio D:\Programas
+  win_file:
+    path: 'D:\Programas'
+    state: directory
+
+# 3. Instalar o Chocolatey (Gerenciador de pacotes padrão para Windows)
+# Este passo é o que permite que as roles de Java e Node.js funcionem perfeitamente
+- name: Garantir que o Chocolatey esta instalado na maquina
+  win_chocolatey:
+    name: chocolatey
+    state: present
+
+# 4. Ajustar políticas básicas de segurança local para automação (Opcional, mas altamente recomendado)
+- name: Configurar LocalAccountTokenFilterPolicy para permitir administradores locais via rede
+  win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+    name: LocalAccountTokenFilterPolicy
+    data: 1
+    type: dword
     state: present

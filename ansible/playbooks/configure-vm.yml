@@ -1,31 +1,27 @@
 ---
-- name: Configurar VM de aplicação
+- name: Configurar VM de Windows 
   hosts: app_servers
-  become: true
+  gather_facts: true
   vars:
-    app_user: "mvrc"
-    app_dir: "/opt/app"
-    static_ip: "192.168.31.49"
-    gateway: "192.168.31.1"
-    dns_primary: "192.168.31.1"
-    dns_secondary: "8.8.8.8"
+    # Dados da sua rede informados:
+    ad_netmask: "255.255.0.0"
+    ad_gateway: "172.16.0.254"
+    ad_dns_primary: "172.16.0.254"
+    
+    # Mapeamento padrão de placas no Windows do vSphere
+    vm_network_interface_name: "Ethernet"   # Placa antiga (VM Network)
+    ad_interface_name: "Ethernet 2"         # Placa nova (Rede AD)
 
   pre_tasks:
-    - name: Aguardar SSH ficar disponível
-      wait_for_connection:
-        delay: 10
-        timeout: 120
-
-    - name: Atualizar cache de pacotes
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600
+    - name: Aguardar o WinRM ficar disponível na VM Windows
+      win_ping:
+      register: result
+      until: result is success
+      retries: 30
+      delay: 10
 
   roles:
     - network
     - base
     - java
     - nodejs
-    - nginx
-    - app-user
-    - docker
