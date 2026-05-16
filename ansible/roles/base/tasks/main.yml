@@ -1,0 +1,12 @@
+---
+- name: Instalar pacotes essenciais
+  apt:
+    name:
+      - cifs-utils
+      - curl
+      - wget
+      - unzip
+      - git
+      - xz-utils
+      - ca-certificates
+    state: present

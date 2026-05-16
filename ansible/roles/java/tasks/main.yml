@@ -1,0 +1,22 @@
+---
+- name: Verificar se Java Runtime já está instalado
+  command: java -version
+  register: java_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Instalar OpenJDK 21 JRE
+  apt:
+    name: openjdk-21-jre-headless
+    state: present
+    update_cache: yes
+  when: java_check.rc != 0
+
+- name: Confirmar versão instalada
+  command: java -version
+  register: java_version
+  changed_when: false
+
+- name: Exibir versão do Java
+  debug:
+    msg: "{{ java_version.stderr }}"
