@@ -1,5 +1,5 @@
 ---
-# 1. Aplicar a configuração de rede estática na interface do AD usando PowerShell moderno (Corrige o erro do netsh no Win11)
+# 1. Aplicar a configuração de rede estática na interface do AD usando PowerShell moderno
 - name: Configurar IP estatico e Mascara na interface do AD
   ansible.windows.win_shell: |
     $interface = Get-NetAdapter -Name "{{ ad_interface_name }}" -ErrorAction SilentlyContinue
@@ -7,24 +7,21 @@
         # Limpa IPs estáticos anteriores na placa para evitar conflitos de escopo
         Remove-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -Confirm:$false -ErrorAction SilentlyContinue
         
-        # Aplica o novo IP Estático, Máscara e Gateway de forma nativa
+        # Aplica o novo IP Estático, Máscara (PrefixLength 16 = 255.255.0.0) e Gateway de forma nativa
         New-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -IPAddress "{{ static_ip }}" -PrefixLength 16 -DefaultGateway "{{ ad_gateway }}"
     } else {
         Write-Error "A interface de rede '{{ ad_interface_name }}' nao foi encontrada no Windows 11."
         exit 1
     }
   async: 30
-  poll: 0 # Mudado para 0 para o Ansible não cair se a rede piscar na virada do IP
+  poll: 0
 
-# 2. Configurar o servidor DNS Primário usando o módulo oficial atualizado
+# 2. Configurar o servidor DNS Primário usando PowerShell Nativo (Remove a dependência do community.windows)
 - name: Configurar DNS Primario na interface do AD
-  community.windows.win_dns_client:
-    adapter_names: "{{ ad_interface_name }}"
-    dns_servers:
-      - "{{ ad_dns_primary }}"
-      - "8.8.8.8"
+  ansible.windows.win_shell: |
+    Set-DnsClientServerAddress -InterfaceAlias "{{ ad_interface_name }}" -ServerAddresses ("{{ ad_dns_primary }}", "8.8.8.8")
 
-# 3. Pequena pausa para a tabela de roteamento do Windows 11 se estabilizar pós-troca de IP
+# 3. Pequena pausa para a tabela de roteamento do Windows 11 se estabilizar pós-troca de IP/DNS
 - name: Aguardar estabilizacao da nova rota de rede
   ansible.windows.win_ping:
   retries: 5
