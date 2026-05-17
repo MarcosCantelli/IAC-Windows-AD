@@ -20,12 +20,13 @@
 
 # 4. Ingressar a VM no domínio corporativo usando o usuário ansible do AD
 - name: Ingressar a VM no dominio mvrc.local
-  win_domain_membership:
+  microsoft.ad.membership:
     dns_domain_name: "mvrc.local"
     domain_admin_user: "ansible@mvrc.local"
-    domain_admin_password: "{{ domain_password }}" # Injetado com segurança pelo Jenkins
+    domain_admin_password: "{{ domain_password }}"
     state: domain
   register: domain_join
+  notify: Reiniciar Windows pós-domain-join
 
 # 5. Reiniciar a VM para consolidar a alteração do Domínio
 - name: Reiniciar a VM para aplicar alteracoes de rede e dominio
