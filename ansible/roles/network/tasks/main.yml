@@ -13,7 +13,10 @@
         # C) Define os servidores de DNS na placa do AD
         Set-DnsClientServerAddress -InterfaceAlias "{{ ad_interface_name }}" -ServerAddresses ("{{ ad_dns_primary }}", "8.8.8.8")
         
-        # D) Limpa o cache de DNS do Windows 11
+        # D) Garante que a interface do AD tenha maior prioridade de métrica (Evita que o DHCP atropele o DNS do AD)
+        Set-NetIPInterface -InterfaceAlias "{{ ad_interface_name }}" -InterfaceMetric 10
+        
+        # E) Limpa o cache de DNS do Windows 11
         Clear-DnsClientCache
     } else {
         Write-Error "A interface de rede '{{ ad_interface_name }}' nao foi encontrada."
@@ -40,12 +43,13 @@
     reboot_timeout: 300
   when: hostname_change.reboot_required
 
-# 5. NOVO: Garante que o Windows limpe o cache de DNS pós-reboot e valida se o AD responde
-- name: Forçar limpeza de cache de DNS e testar resolução do domínio pós-reboot
+# 5. AJUSTADO: Força a consulta apontando diretamente para o IP do seu AD Server
+- name: Forçar limpeza de cache de DNS e testar resolução apontando diretamente para o DC
   ansible.windows.win_shell: |
     Clear-DnsClientCache
-    Resolve-DnsName -Name "mvrc.local" -Type A -ErrorAction SilentlyContinue
-  retries: 10
+    # Testa a resolução forçando o servidor DNS do seu AD para validar a rota
+    Resolve-DnsName -Name "mvrc.local" -Server "{{ ad_dns_primary }}" -ErrorAction Stop
+  retries: 15
   delay: 10
   register: dns_check
   until: dns_check.rc == 0
