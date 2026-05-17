@@ -1,22 +1,24 @@
 ---
-# 1. Configura o hostname, IP Estático, Máscara, Gateway e DNS juntos
+# 1. Configura IP Estático, Máscara, Gateway e DNS de forma PERSISTENTE
 - name: Configurar IP estatico, Mascara, DNS e Nome da VM no Windows
   ansible.windows.win_shell: |
     $interface = Get-NetAdapter -Name "{{ ad_interface_name }}" -ErrorAction SilentlyContinue
     if ($interface) {
-        # A) Remove IPs antigos da placa para evitar conflitos de escopo
+        # Garante a remoção de conexões e IPs antigos para evitar conflito de escopo
         Remove-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -Confirm:$false -ErrorAction SilentlyContinue
         
-        # B) Aplica o novo IP Estático, Máscara e Gateway
-        New-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -IPAddress "{{ static_ip }}" -PrefixLength 16 -DefaultGateway "{{ ad_gateway }}" -ErrorAction SilentlyContinue
+        # Remove gateways antigos persistidos na placa para limpar a tabela de rotas
+        Remove-NetRoute -InterfaceAlias "{{ ad_interface_name }}" -Confirm:$false -ErrorAction SilentlyContinue
+
+        # Aplica o novo IP Estático e força o Gateway a ser persistente
+        New-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -IPAddress "{{ static_ip }}" -PrefixLength 16 -DefaultGateway "{{ ad_gateway }}"
         
-        # C) Define os servidores de DNS na placa do AD
+        # Define os servidores de DNS de forma fixa
         Set-DnsClientServerAddress -InterfaceAlias "{{ ad_interface_name }}" -ServerAddresses ("{{ ad_dns_primary }}", "8.8.8.8")
         
-        # D) Garante que a interface do AD tenha maior prioridade de métrica (Evita que o DHCP atropele o DNS do AD)
-        Set-NetIPInterface -InterfaceAlias "{{ ad_interface_name }}" -InterfaceMetric 10
+        # Força a prioridade máxima para a interface do AD
+        Set-NetIPInterface -InterfaceAlias "{{ ad_interface_name }}" -InterfaceMetric 5
         
-        # E) Limpa o cache de DNS do Windows 11
         Clear-DnsClientCache
     } else {
         Write-Error "A interface de rede '{{ ad_interface_name }}' nao foi encontrada."
@@ -43,11 +45,15 @@
     reboot_timeout: 300
   when: hostname_change.reboot_required
 
-# 5. AJUSTADO: Força a consulta apontando diretamente para o IP do seu AD Server
+# 5. Valida se o AD responde. Se falhar, tenta restaurar a rota do gateway localmente
 - name: Forçar limpeza de cache de DNS e testar resolução apontando diretamente para o DC
   ansible.windows.win_shell: |
     Clear-DnsClientCache
-    # Testa a resolução forçando o servidor DNS do seu AD para validar a rota
+    # Se a rota sumir pós-reboot, este comando força o Windows 11 a reatar o gateway do AD
+    $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -InterfaceAlias "{{ ad_interface_name }}" -ErrorAction SilentlyContinue
+    if (-not $route) {
+        New-NetRoute -DestinationPrefix "0.0.0.0/0" -InterfaceAlias "{{ ad_interface_name }}" -NextHop "{{ ad_gateway }}" -Metric 5 -ErrorAction SilentlyContinue
+    }
     Resolve-DnsName -Name "mvrc.local" -Server "{{ ad_dns_primary }}" -ErrorAction Stop
   retries: 15
   delay: 10
