@@ -1,22 +1,34 @@
 ---
-# 1. Aplicar a configuração de rede estática na interface do AD
+# 1. Aplicar a configuração de rede estática na interface do AD usando PowerShell moderno (Corrige o erro do netsh no Win11)
 - name: Configurar IP estatico e Mascara na interface do AD
-  win_shell: |
-    netsh interface ipv4 set address name="{{ ad_interface_name }}" static "{{ static_ip }}" "{{ ad_netmask }}" "{{ ad_gateway }}"
+  ansible.windows.win_shell: |
+    $interface = Get-NetAdapter -Name "{{ ad_interface_name }}" -ErrorAction SilentlyContinue
+    if ($interface) {
+        # Limpa IPs estáticos anteriores na placa para evitar conflitos de escopo
+        Remove-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -Confirm:$false -ErrorAction SilentlyContinue
+        
+        # Aplica o novo IP Estático, Máscara e Gateway de forma nativa
+        New-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -IPAddress "{{ static_ip }}" -PrefixLength 16 -DefaultGateway "{{ ad_gateway }}"
+    } else {
+        Write-Error "A interface de rede '{{ ad_interface_name }}' nao foi encontrada no Windows 11."
+        exit 1
+    }
   async: 30
-  poll: 5
+  poll: 0 # Mudado para 0 para o Ansible não cair se a rede piscar na virada do IP
 
-# 2. Configurar o servidor DNS Primário (Seu Active Directory)
+# 2. Configurar o servidor DNS Primário usando o módulo oficial atualizado
 - name: Configurar DNS Primario na interface do AD
-  win_dns_client:
+  community.windows.win_dns_client:
     adapter_names: "{{ ad_interface_name }}"
-    ipv4_addresses:
+    dns_servers:
       - "{{ ad_dns_primary }}"
       - "8.8.8.8"
 
-# 3. Validar se a comunicação interna está respondendo pelo novo IP estático
-- name: Validar conectividade com o Controlador de Dominio (AD)
-  win_ping:
+# 3. Pequena pausa para a tabela de roteamento do Windows 11 se estabilizar pós-troca de IP
+- name: Aguardar estabilizacao da nova rota de rede
+  ansible.windows.win_ping:
+  retries: 5
+  delay: 5
 
 # 4. Ingressar a VM no domínio corporativo usando o usuário ansible do AD
 - name: Ingressar a VM no dominio mvrc.local
@@ -30,12 +42,11 @@
 
 # 5. Reiniciar a VM para consolidar a alteração do Domínio
 - name: Reiniciar a VM para aplicar alteracoes de rede e dominio
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 300
   when: domain_join.reboot_required
 
 # 6. Excluir/Desativar o adaptador de rede temporário (VM Network)
-# Como sua rede do AD tem DHCP ativo distribuindo internet, a máquina continuará conectada à rede externa por ela.
 - name: Desativar a interface antiga VM Network (DHCP)
-  win_shell: |
+  ansible.windows.win_shell: |
     Disable-NetAdapter -Name "{{ vm_network_interface_name }}" -Confirm:$false
