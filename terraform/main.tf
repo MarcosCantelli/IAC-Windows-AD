@@ -101,11 +101,4 @@ resource "vsphere_virtual_machine" "vm" {
   clone {
     template_uuid = data.vsphere_virtual_machine.template.id
   }
-
-  # Passa o IP estático calculado como propriedade para o ambiente caso precise consultar via vApp
-  vapp {
-    properties = {
-      "static_ip" = count.index >= 8 ? "172.16.0.${count.index + 2}" : "172.16.0.${count.index + 1}"
-    }
-  }
 }
