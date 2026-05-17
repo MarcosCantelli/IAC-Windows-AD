@@ -57,14 +57,11 @@ resource "vsphere_virtual_machine" "vm" {
   memory                     = var.memory_mb
   guest_id                   = data.vsphere_virtual_machine.template.guest_id
   
-  # CORREÇÃO 1: Herda o firmware exato do template (garante compatibilidade BIOS/UEFI)
+  # Herda o firmware exato do template (garante compatibilidade BIOS/UEFI)
   firmware                   = data.vsphere_virtual_machine.template.firmware
   
-  # CORREÇÃO 2: Herda o tipo de controladora SCSI exato do template (Evita falhas de I/O do Windows)
+  # Herda o tipo de controladora SCSI exato do template (Evita falhas de I/O do Windows)
   scsi_type                  = data.vsphere_virtual_machine.template.scsi_type
-
-  # CORREÇÃO 3: Força a VM a dar boot estritamente pelo disco do SO, ignorando rede e o disco secundário
-  boot_order                 = ["disk0"]
 
   # Timeouts ajustados para Windows boot e inicialização da rede
   wait_for_guest_net_timeout = 10
