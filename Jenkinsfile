@@ -80,13 +80,12 @@ pipeline {
                                 echo "IP Final Alocado (Estático): ${currentStaticIp}"
                                 echo "------------------------------------------------------------"
 
-                                // 1. Aguarda a porta do WinRM HTTPS (5986) responder no IP DHCP gerado
+                                // 1. CORREÇÃO AQUI: Aguarda a porta do WinRM HTTPS (5986) usando 'nc' universal
                                 echo "Aguardando WinRM (Porta 5986) em ${currentDhcpIp}..."
                                 sh """
                                     for t in \$(seq 1 40); do
-                                        if exec 3<>/dev/tcp/${currentDhcpIp}/5986; then
+                                        if nc -z -w5 ${currentDhcpIp} 5986 2>/dev/null; then
                                             echo "WinRM disponível após \$((t*10)) segundos!"
-                                            exec 3>&-
                                             exit 0
                                         fi
                                         echo "Tentativa \$t/40 — aguardando inicialização do Windows..."
