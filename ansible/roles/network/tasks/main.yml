@@ -13,7 +13,7 @@
         # C) Define os servidores de DNS na placa do AD
         Set-DnsClientServerAddress -InterfaceAlias "{{ ad_interface_name }}" -ServerAddresses ("{{ ad_dns_primary }}", "8.8.8.8")
         
-        # D) CORREÇÃO: Limpa o cache de DNS do Windows 11 para forçar a busca do AD no IP novo
+        # D) Limpa o cache de DNS do Windows 11
         Clear-DnsClientCache
     } else {
         Write-Error "A interface de rede '{{ ad_interface_name }}' nao foi encontrada."
@@ -28,20 +28,29 @@
   retries: 6
   delay: 10
 
-# 3. CORREÇÃO: Altera o nome do computador para evitar o conflito de 'VM-TEMPLATE' no AD
-# Usamos o final do IP Estático para gerar um nome único (Ex: VDI-Win11-1)
+# 3. Altera o nome do computador para evitar o conflito de 'VM-TEMPLATE' no AD
 - name: Garantir que o nome do computador e unico antes do Domain Join
   ansible.windows.win_hostname:
     name: "VDI-W11-{{ static_ip.split('.')[-1] }}"
   register: hostname_change
 
-# 4. Caso o nome tenha mudado, precisamos reiniciar para o Windows aplicar o novo SID local
+# 4. Caso o nome tenha mudado, precisamos reiniciar para o Windows aplicar o novo nome
 - name: Reiniciar para aplicar o novo nome de computador se necessario
   ansible.windows.win_reboot:
     reboot_timeout: 300
   when: hostname_change.reboot_required
 
-# 5. Ingressar a VM no domínio corporativo usando o usuário ansible do AD
+# 5. NOVO: Garante que o Windows limpe o cache de DNS pós-reboot e valida se o AD responde
+- name: Forçar limpeza de cache de DNS e testar resolução do domínio pós-reboot
+  ansible.windows.win_shell: |
+    Clear-DnsClientCache
+    Resolve-DnsName -Name "mvrc.local" -Type A -ErrorAction SilentlyContinue
+  retries: 10
+  delay: 10
+  register: dns_check
+  until: dns_check.rc == 0
+
+# 6. Ingressar a VM no domínio corporativo usando o usuário ansible do AD
 - name: Ingressar a VM no dominio mvrc.local
   microsoft.ad.membership:
     dns_domain_name: "mvrc.local"
@@ -51,13 +60,13 @@
   register: domain_join
   notify: Reiniciar Windows pós-domain-join
 
-# 6. Reiniciar a VM para consolidar a alteração do Domínio
+# 7. Reiniciar a VM para consolidar a alteração do Domínio
 - name: Reiniciar a VM para aplicar alteracoes de rede e dominio
   ansible.windows.win_reboot:
     reboot_timeout: 300
   when: domain_join.reboot_required
 
-# 7. Excluir/Desativar o adaptador de rede temporário (VM Network)
+# 8. Excluir/Desativar o adaptador de rede temporário (VM Network)
 - name: Desativar a interface antiga VM Network (DHCP)
   ansible.windows.win_shell: |
     Disable-NetAdapter -Name "{{ vm_network_interface_name }}" -Confirm:$false
