@@ -1,78 +1,119 @@
 ---
-# 1. Altera o hostname primeiro
+# 1. Define hostname único
 - name: Garantir que o nome do computador seja unico antes de mexer na rede
   ansible.windows.win_hostname:
     name: "VDI-W11-{{ static_ip.split('.')[-1] }}"
   register: hostname_change
 
-# 2. Reinicia caso necessário
+# 2. Reinicia se hostname mudou
 - name: Reiniciar para aplicar o novo nome de computador
   ansible.windows.win_reboot:
     reboot_timeout: 300
   when: hostname_change.reboot_required
 
-# 3. Descobre automaticamente a interface DHCP
+# 3. Descobre interface DHCP temporária
 - name: Descobrir interface DHCP ativa
   ansible.windows.win_shell: |
-    $adapter = Get-NetIPInterface -AddressFamily IPv4 |
-      Where-Object {
-        $_.Dhcp -eq "Enabled" -and
-        $_.ConnectionState -eq "Connected"
-      } |
-      Select-Object -First 1 -ExpandProperty InterfaceAlias
-
-    Write-Output $adapter
+    Get-NetIPConfiguration |
+    Where-Object {
+      $_.IPv4DefaultGateway -ne $null -and
+      $_.NetAdapter.Status -eq "Up"
+    } |
+    Select-Object -ExpandProperty InterfaceAlias
   register: dhcp_adapter
 
-# 4. Exibe interface encontrada
+# 4. Limpa nome da interface
+- name: Normalizar nome da interface DHCP
+  set_fact:
+    dhcp_interface_name: "{{ dhcp_adapter.stdout | trim }}"
+
+# 5. Exibe interface encontrada
 - name: Exibir interface DHCP encontrada
   debug:
-    msg: "{{ dhcp_adapter.stdout | trim }}"
+    msg: "{{ dhcp_interface_name }}"
 
-# 5. Desativa interface DHCP
+# 6. Descobre interface AD
+- name: Descobrir interface da rede AD
+  ansible.windows.win_shell: |
+    Get-NetAdapter |
+    Where-Object {
+      $_.Status -eq "Up" -and
+      $_.Name -ne "{{ dhcp_interface_name }}"
+    } |
+    Select-Object -ExpandProperty Name
+  register: ad_adapter
+
+# 7. Normaliza interface AD
+- name: Normalizar interface AD
+  set_fact:
+    ad_interface_real: "{{ ad_adapter.stdout | trim }}"
+
+# 8. Exibe interface AD
+- name: Exibir interface AD encontrada
+  debug:
+    msg: "{{ ad_interface_real }}"
+
+# 9. Desativa NIC DHCP antiga
 - name: Desativar interface antiga DHCP para evitar conflito de rota
   ansible.windows.win_shell: |
-    Disable-NetAdapter -Name "{{ dhcp_adapter.stdout | trim }}" -Confirm:$false
-  when:
-    - dhcp_adapter.stdout is defined
-    - dhcp_adapter.stdout | trim != ""
+    Disable-NetAdapter -Name "{{ dhcp_interface_name }}" -Confirm:$false
 
-# 6. Configura IP estático
+# 10. Configura IP/DNS/Gateway na rede AD
 - name: Configurar IP estatico e DNS na interface do AD
   ansible.windows.win_shell: |
-    $interface = "{{ ad_interface_name }}"
+
+    $iface = "{{ ad_interface_real }}"
 
     # Remove IPs antigos
-    Get-NetIPAddress -InterfaceAlias $interface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Get-NetIPAddress -InterfaceAlias $iface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
       Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
 
     # Remove rotas antigas
-    Get-NetRoute -InterfaceAlias $interface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Get-NetRoute -InterfaceAlias $iface -ErrorAction SilentlyContinue |
       Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
 
-    # Configura IP estático
+    # Configura IP fixo
     New-NetIPAddress `
-      -InterfaceAlias $interface `
+      -InterfaceAlias $iface `
       -IPAddress "{{ static_ip }}" `
-      -PrefixLength 16 `
-      -DefaultGateway "{{ ad_gateway }}"
+      -PrefixLength 24 `
+      -DefaultGateway "172.16.0.254"
 
-    # Configura DNS
+    # FORÇA DNS do AD
     Set-DnsClientServerAddress `
-      -InterfaceAlias $interface `
-      -ServerAddresses ("{{ ad_dns_primary }}")
+      -InterfaceAlias $iface `
+      -ServerAddresses ("172.16.0.254")
+
+    # Remove DNS público residual
+    Set-DnsClientGlobalSetting -SuffixSearchList @("mvrc.local")
 
     # Limpa cache DNS
     Clear-DnsClientCache
-  async: 60
-  poll: 0
 
-# 7. Aguarda WinRM estabilizar
+    # Reinicia adaptador
+    Restart-NetAdapter -Name $iface
+
+# 11. Aguarda rede estabilizar
+- name: Aguardar rede estabilizar
+  pause:
+    seconds: 30
+
+# 12. Aguarda WinRM no novo IP
 - name: Aguardar WinRM estabilizar no novo IP estatico
   ansible.windows.win_ping:
   retries: 15
   delay: 10
 
+# 13. Mostrar configuração final da rede
+- name: Mostrar configuracao IP final
+  ansible.windows.win_shell: |
+    ipconfig /all
+  register: ipconfig_result
+
+- debug:
+    var: ipconfig_result.stdout
+
+# 14. Validar DNS do domínio
 - name: Validar DNS do dominio
   ansible.windows.win_shell: |
     nslookup mvrc.local
@@ -81,7 +122,25 @@
 - debug:
     var: nslookup_result.stdout
 
-# 8. Ingressa no domínio
+# 15. Validar SRV do AD
+- name: Validar SRV do Active Directory
+  ansible.windows.win_shell: |
+    nslookup -type=SRV _ldap._tcp.dc._msdcs.mvrc.local
+  register: srv_lookup
+
+- debug:
+    var: srv_lookup.stdout
+
+# 16. Testar conectividade com DC
+- name: Testar conectividade com Domain Controller
+  ansible.windows.win_shell: |
+    Test-Connection 172.16.0.254 -Count 2
+  register: ping_dc
+
+- debug:
+    var: ping_dc.stdout
+
+# 17. Ingressar no domínio
 - name: Ingressar a VM no dominio mvrc.local
   microsoft.ad.membership:
     dns_domain_name: "mvrc.local"
@@ -91,8 +150,8 @@
   register: domain_join
   notify: Reiniciar Windows pós-domain-join
 
-# 9. Reinicialização final
+# 18. Reinício final
 - name: Reiniciar a VM para aplicar o ingresso no dominio
   ansible.windows.win_reboot:
-    reboot_timeout: 300
+    reboot_timeout: 600
   when: domain_join.reboot_required
