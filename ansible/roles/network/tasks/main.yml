@@ -73,6 +73,14 @@
   retries: 15
   delay: 10
 
+- name: Validar DNS do dominio
+  ansible.windows.win_shell: |
+    nslookup mvrc.local
+  register: nslookup_result
+
+- debug:
+    var: nslookup_result.stdout
+
 # 8. Ingressa no domínio
 - name: Ingressar a VM no dominio mvrc.local
   microsoft.ad.membership:
