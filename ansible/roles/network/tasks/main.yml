@@ -1,45 +1,82 @@
 ---
-# 1. Altera o nome do computador primeiro (Com a rede DHCP original ativa, sem risco de perder o WinRM)
-- name: Garantir que o nome do computador e unico antes de mexer na rede
+# 1. Altera o hostname primeiro
+#    (mantendo a rede DHCP ativa para não perder o WinRM)
+- name: Garantir que o nome do computador seja unico antes de mexer na rede
   ansible.windows.win_hostname:
     name: "VDI-W11-{{ static_ip.split('.')[-1] }}"
   register: hostname_change
 
-# 2. Se o nome mudou, reinicia a máquina
+# 2. Reinicia caso o hostname tenha mudado
 - name: Reiniciar para aplicar o novo nome de computador
   ansible.windows.win_reboot:
     reboot_timeout: 300
   when: hostname_change.reboot_required
 
-# 3. ABORDAGEM NOVA: Desativa a rede temporária (DHCP) AGORA para isolar o Windows 11
-- name: Desativar a interface antiga VM Network (DHCP) para evitar conflitos de rota
+# 3. Descobre automaticamente qual interface está usando DHCP
+#    Isso evita depender de nomes como "Ethernet", "Ethernet 2", etc
+- name: Descobrir interface DHCP ativa
   ansible.windows.win_shell: |
-    Disable-NetAdapter -Name "{{ vm_network_interface_name }}" -Confirm:$false
+    $adapter = Get-NetIPInterface -AddressFamily IPv4 |
+      Where-Object {
+        $_.Dhcp -eq "Enabled" -and
+        $_.ConnectionState -eq "Connected"
+      } |
+      Select-Object -First 1 -ExpandProperty InterfaceAlias
 
-# 4. Configura o IP Estático e DNS na única interface que sobrou (A do AD)
-- name: Configurar IP estatico e DNS na interface do AD isolada
+    Write-Output $adapter
+  register: dhcp_adapter
+
+# 4. Exibe qual interface foi encontrada
+- name: Exibir interface DHCP encontrada
+  debug:
+    var: dhcp_adapter.stdout
+
+# 5. Desativa a interface DHCP temporária
+#    Somente se ela existir
+- name: Desativar interface antiga DHCP para evitar conflito de rota
   ansible.windows.win_shell: |
-    # Remove qualquer resquício de configuração dinâmica ou estática anterior
-    Remove-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -Confirm:$false -ErrorAction SilentlyContinue
-    
-    # Seta o IP Estático e o Gateway do AD
-    New-NetIPAddress -InterfaceAlias "{{ ad_interface_name }}" -IPAddress "{{ static_ip }}" -PrefixLength 16 -DefaultGateway "{{ ad_gateway }}"
-    
-    # Seta o DNS apontando estritamente para o Domain Controller
-    Set-DnsClientServerAddress -InterfaceAlias "{{ ad_interface_name }}" -ServerAddresses ("{{ ad_dns_primary }}")
-    
-    # Limpa o cache para garantir consulta limpa
+    Disable-NetAdapter -Name "{{ dhcp_adapter.stdout }}" -Confirm:$false
+  when:
+    - dhcp_adapter.stdout is defined
+    - dhcp_adapter.stdout | trim != ""
+
+# 6. Configura IP estático na interface do AD
+- name: Configurar IP estatico e DNS na interface do AD
+  ansible.windows.win_shell: |
+    $interface = "{{ ad_interface_name }}"
+
+    # Remove IPs antigos
+    Get-NetIPAddress -InterfaceAlias $interface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+      Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+
+    # Remove rotas antigas
+    Get-NetRoute -InterfaceAlias $interface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+      Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+
+    # Configura IP estático
+    New-NetIPAddress `
+      -InterfaceAlias $interface `
+      -IPAddress "{{ static_ip }}" `
+      -PrefixLength 16 `
+      -DefaultGateway "{{ ad_gateway }}"
+
+    # Configura DNS apontando para o DC
+    Set-DnsClientServerAddress `
+      -InterfaceAlias $interface `
+      -ServerAddresses ("{{ ad_dns_primary }}")
+
+    # Limpa cache DNS
     Clear-DnsClientCache
   async: 60
   poll: 0
 
-# 5. Aguarda o WinRM responder no novo IP estático (Como a placa DHCP morreu, o Ansible chaveia automaticamente para o static_ip se configurado no inventário)
-- name: Aguardar o WinRM estabilizar no novo IP estatico
+# 7. Aguarda WinRM responder novamente após troca de rede
+- name: Aguardar WinRM estabilizar no novo IP estatico
   ansible.windows.win_ping:
-  retries: 10
+  retries: 15
   delay: 10
 
-# 6. Ingressar a VM no domínio corporativo (Agora sem concorrência de DNS!)
+# 8. Ingressa no domínio
 - name: Ingressar a VM no dominio mvrc.local
   microsoft.ad.membership:
     dns_domain_name: "mvrc.local"
@@ -49,7 +86,7 @@
   register: domain_join
   notify: Reiniciar Windows pós-domain-join
 
-# 7. Reiniciar final para consolidar o ingresso no Domínio
+# 9. Reinicialização final
 - name: Reiniciar a VM para aplicar o ingresso no dominio
   ansible.windows.win_reboot:
     reboot_timeout: 300
