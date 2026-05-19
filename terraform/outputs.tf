@@ -9,6 +9,10 @@ output "vms_names" {
 }
 
 output "vms_calculated_static_ips" {
-  description = "Lista dos IPs estáticos calculados para a rede do AD (pulando o .9 do SQL)"
-  value       = [for i in range(var.vm_count) : i >= 8 ? "172.16.0.${i + 2}" : "172.16.0.${i + 1}"]
+  description = "Lista dos IPs estáticos calculados para a rede AD"
+
+  value = [
+    for i in range(var.vm_count) :
+    "172.16.0.${i + 50}"
+  ]
 }

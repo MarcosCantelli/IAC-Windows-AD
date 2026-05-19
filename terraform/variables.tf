@@ -76,3 +76,27 @@ variable "vm_count" {
   type        = number
   default     = 1
 }
+
+variable "static_ip_start" {
+  description = "IP inicial para alocação dinâmica das VMs"
+  type        = number
+  default     = 50
+}
+
+variable "ad_gateway" {
+  description = "Gateway da rede AD"
+  type        = string
+  default     = "172.16.0.254"
+}
+
+variable "ad_dns_primary" {
+  description = "DNS primário do AD"
+  type        = string
+  default     = "172.16.0.254"
+}
+
+variable "ad_network_prefix" {
+  description = "Prefixo da rede AD"
+  type        = string
+  default     = "172.16.0"
+}
