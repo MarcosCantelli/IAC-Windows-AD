@@ -1,19 +1,17 @@
 ---
 # 1. Altera o hostname primeiro
-#    (mantendo a rede DHCP ativa para não perder o WinRM)
 - name: Garantir que o nome do computador seja unico antes de mexer na rede
   ansible.windows.win_hostname:
     name: "VDI-W11-{{ static_ip.split('.')[-1] }}"
   register: hostname_change
 
-# 2. Reinicia caso o hostname tenha mudado
+# 2. Reinicia caso necessário
 - name: Reiniciar para aplicar o novo nome de computador
   ansible.windows.win_reboot:
     reboot_timeout: 300
   when: hostname_change.reboot_required
 
-# 3. Descobre automaticamente qual interface está usando DHCP
-#    Isso evita depender de nomes como "Ethernet", "Ethernet 2", etc
+# 3. Descobre automaticamente a interface DHCP
 - name: Descobrir interface DHCP ativa
   ansible.windows.win_shell: |
     $adapter = Get-NetIPInterface -AddressFamily IPv4 |
@@ -26,21 +24,20 @@
     Write-Output $adapter
   register: dhcp_adapter
 
-# 4. Exibe qual interface foi encontrada
+# 4. Exibe interface encontrada
 - name: Exibir interface DHCP encontrada
   debug:
-    var: dhcp_adapter.stdout
+    msg: "{{ dhcp_adapter.stdout | trim }}"
 
-# 5. Desativa a interface DHCP temporária
-#    Somente se ela existir
+# 5. Desativa interface DHCP
 - name: Desativar interface antiga DHCP para evitar conflito de rota
   ansible.windows.win_shell: |
-    Disable-NetAdapter -Name "{{ dhcp_adapter.stdout }}" -Confirm:$false
+    Disable-NetAdapter -Name "{{ dhcp_adapter.stdout | trim }}" -Confirm:$false
   when:
     - dhcp_adapter.stdout is defined
     - dhcp_adapter.stdout | trim != ""
 
-# 6. Configura IP estático na interface do AD
+# 6. Configura IP estático
 - name: Configurar IP estatico e DNS na interface do AD
   ansible.windows.win_shell: |
     $interface = "{{ ad_interface_name }}"
@@ -60,7 +57,7 @@
       -PrefixLength 16 `
       -DefaultGateway "{{ ad_gateway }}"
 
-    # Configura DNS apontando para o DC
+    # Configura DNS
     Set-DnsClientServerAddress `
       -InterfaceAlias $interface `
       -ServerAddresses ("{{ ad_dns_primary }}")
@@ -70,7 +67,7 @@
   async: 60
   poll: 0
 
-# 7. Aguarda WinRM responder novamente após troca de rede
+# 7. Aguarda WinRM estabilizar
 - name: Aguardar WinRM estabilizar no novo IP estatico
   ansible.windows.win_ping:
   retries: 15
