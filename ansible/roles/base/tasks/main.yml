@@ -1,6 +1,6 @@
 ---
 #########################################################################
-# DISCO D:\ PROGRAMAS
+# DISCO D:
 #########################################################################
 
 - name: Garantir que o segundo disco esteja online
@@ -8,67 +8,65 @@
     script: |
       $disk = Get-Disk -Number 1 -ErrorAction SilentlyContinue
 
-      if ($disk -and $disk.IsOffline) {
+      if ($disk) {
           Set-Disk -Number 1 -IsOffline $false
+          Set-Disk -Number 1 -IsReadOnly $false
       }
   ignore_errors: true
 
-- name: Inicializar disco caso esteja RAW
-  ansible.windows.win_powershell:
-    script: |
-      $disk = Get-Disk -Number 1
+#########################################################################
+# VALIDAR SE D: JA EXISTE
+#########################################################################
 
-      if ($disk.PartitionStyle -eq 'RAW') {
-          Initialize-Disk -Number 1 -PartitionStyle GPT
-      }
+- name: Verificar se o drive D ja existe
+  ansible.windows.win_shell: |
+    Get-PSDrive -Name D -ErrorAction SilentlyContinue
+  register: drive_d_exists
+  changed_when: false
+  failed_when: false
 
-- name: Criar partição D: ocupando todo o disco
+#########################################################################
+# CRIAR PARTICAO SOMENTE SE NECESSARIO
+#########################################################################
+
+- name: "Criar partição D ocupando todo o disco"
   community.windows.win_partition:
     drive_letter: D
     disk_number: 1
     partition_size: -1
     state: present
+  when: drive_d_exists.stdout == ""
 
-- name: Formatar volume D: em NTFS
+#########################################################################
+# FORMATAR SOMENTE SE NECESSARIO
+#########################################################################
+
+- name: "Formatar drive D como NTFS"
   community.windows.win_format:
     drive_letter: D
     file_system: NTFS
     new_label: Programas
     state: present
+  when: drive_d_exists.stdout == ""
 
-- name: Criar diretório raiz de programas
+#########################################################################
+# DIRETORIOS
+#########################################################################
+
+- name: "Criar diretório D:\\Programas"
   ansible.windows.win_file:
-    path: "{{ programs_root }}"
+    path: 'D:\Programas'
     state: directory
 
-#########################################################################
-# CONFIGURAÇÕES WINDOWS BASE
-#########################################################################
+- name: "Criar diretório D:\\Programas\\Temp"
+  ansible.windows.win_file:
+    path: 'D:\Programas\Temp'
+    state: directory
 
-- name: Configurar LocalAccountTokenFilterPolicy
-  ansible.windows.win_regedit:
-    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
-    name: LocalAccountTokenFilterPolicy
-    data: 1
-    type: dword
-    state: present
-
-- name: Desabilitar UAC remoto restritivo
-  ansible.windows.win_regedit:
-    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
-    name: EnableLUA
-    data: 1
-    type: dword
-    state: present
-
-#########################################################################
-# POWERSHELL 7
-#########################################################################
-
-- name: Garantir instalação do PowerShell 7
-  chocolatey.chocolatey.win_chocolatey:
-    name: powershell-core
-    state: present
+- name: "Criar diretório D:\\Programas\\Logs"
+  ansible.windows.win_file:
+    path: 'D:\Programas\Logs'
+    state: directory
 
 #########################################################################
 # CHOCOLATEY
@@ -79,80 +77,91 @@
     name: chocolatey
     state: present
 
-- name: Habilitar uso global do Chocolatey
-  ansible.windows.win_shell: |
-    choco feature enable -n allowGlobalConfirmation
-  changed_when: false
-
 #########################################################################
-# FERRAMENTAS BASE
+# CONFIGURACOES WINDOWS REMOTE ADMIN
 #########################################################################
 
-- name: Instalar 7zip
-  chocolatey.chocolatey.win_chocolatey:
-    name: 7zip
-    state: present
-
-- name: Instalar Git
-  chocolatey.chocolatey.win_chocolatey:
-    name: git
-    state: present
-
-- name: Instalar Firefox
-  chocolatey.chocolatey.win_chocolatey:
-    name: firefox
-    state: present
-
-- name: Instalar Visual Studio Code
-  chocolatey.chocolatey.win_chocolatey:
-    name: vscode
+- name: Configurar LocalAccountTokenFilterPolicy
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+    name: LocalAccountTokenFilterPolicy
+    data: 1
+    type: dword
     state: present
 
 #########################################################################
-# WINDOWS FEATURES IMPORTANTES
+# POWERSHELL EXECUTION POLICY
 #########################################################################
 
-- name: Instalar .NET Framework 4.8
-  chocolatey.chocolatey.win_chocolatey:
-    name: dotnetfx
-    state: present
-
-#########################################################################
-# AJUSTES DE EXECUÇÃO
-#########################################################################
-
-- name: Garantir política RemoteSigned no PowerShell
+- name: Configurar Execution Policy
   ansible.windows.win_shell: |
     Set-ExecutionPolicy RemoteSigned -Force
   changed_when: false
 
 #########################################################################
-# PATH D:\Programas
+# HABILITAR LONG PATHS
 #########################################################################
 
-- name: Garantir diretório Tools
-  ansible.windows.win_file:
-    path: "{{ programs_root }}\\Tools"
-    state: directory
+- name: Habilitar suporte a Long Paths
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem
+    name: LongPathsEnabled
+    data: 1
+    type: dword
+    state: present
 
 #########################################################################
-# WINRM ESTÁVEL
+# CONFIGURAR TIMEZONE
 #########################################################################
 
-- name: Reiniciar serviço WinRM
-  ansible.windows.win_service:
-    name: WinRM
-    state: restarted
+- name: Configurar timezone Brasil
+  community.windows.win_timezone:
+    timezone: "E. South America Standard Time"
 
 #########################################################################
-# INFORMAÇÕES FINAIS
+# CONFIGURAR NTP
 #########################################################################
 
-- name: Exibir resumo do bootstrap base
+- name: Configurar sincronismo NTP
+  ansible.windows.win_shell: |
+    w32tm /config /syncfromflags:domhier /update
+    Restart-Service w32time
+  changed_when: false
+
+#########################################################################
+# WINDOWS FEATURES IMPORTANTES
+#########################################################################
+
+- name: Instalar RSAT AD Tools
+  ansible.windows.win_feature:
+    name:
+      - RSAT-AD-Tools
+    state: present
+  ignore_errors: true
+
+#########################################################################
+# VALIDACOES
+#########################################################################
+
+- name: Validar drive D
+  ansible.windows.win_shell: |
+    Get-Volume -DriveLetter D
+  register: drive_validation
+  changed_when: false
+
+- name: Exibir validacao do drive D
+  debug:
+    var: drive_validation.stdout
+
+#########################################################################
+# RESUMO FINAL
+#########################################################################
+
+- name: Exibir resumo Base
   ansible.windows.win_debug:
     msg:
-      - "Bootstrap base concluído"
-      - "Programas instalados em: {{ programs_root }}"
-      - "Chocolatey operacional"
-      - "PowerShell 7 instalado"
-      - "Ferramentas base instaladas"
+      - "Drive D preparado com sucesso"
+      - "Chocolatey instalado"
+      - "Execution Policy configurada"
+      - "Timezone Brasil configurado"
+      - "Windows preparado para automação"
