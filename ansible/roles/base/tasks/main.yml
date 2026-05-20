@@ -115,7 +115,7 @@
 #########################################################################
 
 - name: Configurar timezone Brasil
-  community.windows.win_timezone:
+  ansible.windows.win_timezone:
     timezone: "E. South America Standard Time"
 
 #########################################################################
@@ -158,7 +158,7 @@
 #########################################################################
 
 - name: Exibir resumo Base
-  ansible.windows.win_debug:
+  debug:
     msg:
       - "Drive D preparado com sucesso"
       - "Chocolatey instalado"
