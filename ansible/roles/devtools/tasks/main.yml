@@ -1,0 +1,151 @@
+---
+#########################################################################
+# DIRETÓRIOS
+#########################################################################
+
+- name: Garantir diretório DEVTOOLS
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\DevTools"
+    state: directory
+
+#########################################################################
+# GIT
+#########################################################################
+
+- name: Instalar Git
+  chocolatey.chocolatey.win_chocolatey:
+    name: git
+    state: present
+
+#########################################################################
+# VISUAL STUDIO CODE
+#########################################################################
+
+- name: Instalar Visual Studio Code
+  chocolatey.chocolatey.win_chocolatey:
+    name: vscode
+    state: present
+
+#########################################################################
+# FIREFOX
+#########################################################################
+
+- name: Instalar Firefox
+  chocolatey.chocolatey.win_chocolatey:
+    name: firefox
+    state: present
+
+#########################################################################
+# SQL SERVER MANAGEMENT STUDIO
+#########################################################################
+
+- name: Instalar SQL Server Management Studio
+  chocolatey.chocolatey.win_chocolatey:
+    name: sql-server-management-studio
+    state: present
+
+#########################################################################
+# AZURE CLI
+#########################################################################
+
+- name: Instalar Azure CLI
+  chocolatey.chocolatey.win_chocolatey:
+    name: azure-cli
+    state: present
+
+#########################################################################
+# TERRAFORM
+#########################################################################
+
+- name: Instalar Terraform
+  chocolatey.chocolatey.win_chocolatey:
+    name: terraform
+    state: present
+
+#########################################################################
+# KUBECTL
+#########################################################################
+
+- name: Instalar kubectl
+  chocolatey.chocolatey.win_chocolatey:
+    name: kubernetes-cli
+    state: present
+
+#########################################################################
+# DOCKER CLI
+#########################################################################
+
+- name: Instalar Docker CLI
+  chocolatey.chocolatey.win_chocolatey:
+    name: docker-cli
+    state: present
+
+#########################################################################
+# VISUAL STUDIO 2022 COMMUNITY
+# (2026 ainda não existe oficialmente)
+#########################################################################
+
+- name: Instalar Visual Studio Community 2022
+  chocolatey.chocolatey.win_chocolatey:
+    name: visualstudio2022community
+    state: present
+    timeout: 7200
+
+#########################################################################
+# VISUAL STUDIO WORKLOADS
+#########################################################################
+
+- name: Instalar workload Desktop Development
+  ansible.windows.win_shell: |
+    & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\vs_installer.exe" modify ^
+    --installPath "C:\Program Files\Microsoft Visual Studio\2022\Community" ^
+    --add Microsoft.VisualStudio.Workload.ManagedDesktop ^
+    --quiet --norestart --wait
+  ignore_errors: true
+
+- name: Instalar workload Web Development
+  ansible.windows.win_shell: |
+    & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\vs_installer.exe" modify ^
+    --installPath "C:\Program Files\Microsoft Visual Studio\2022\Community" ^
+    --add Microsoft.VisualStudio.Workload.NetWeb ^
+    --quiet --norestart --wait
+  ignore_errors: true
+
+#########################################################################
+# TESTES
+#########################################################################
+
+- name: Validar Git
+  ansible.windows.win_shell: |
+    git --version
+  register: git_result
+  changed_when: false
+
+- name: Validar Terraform
+  ansible.windows.win_shell: |
+    terraform -version
+  register: terraform_result
+  changed_when: false
+
+- name: Validar Azure CLI
+  ansible.windows.win_shell: |
+    az version
+  register: az_result
+  changed_when: false
+
+- name: Validar kubectl
+  ansible.windows.win_shell: |
+    kubectl version --client
+  register: kubectl_result
+  changed_when: false
+
+#########################################################################
+# DEBUG FINAL
+#########################################################################
+
+- name: Exibir resumo DevTools
+  ansible.windows.win_debug:
+    msg:
+      - "{{ git_result.stdout }}"
+      - "{{ terraform_result.stdout }}"
+      - "{{ kubectl_result.stdout }}"

@@ -1,44 +1,158 @@
 ---
-# 1. Coloca o disco secundário online (Disco 1 vindo do vSphere)
-- name: Garantir que o segundo disco esta online
+#########################################################################
+# DISCO D:\ PROGRAMAS
+#########################################################################
+
+- name: Garantir que o segundo disco esteja online
   ansible.windows.win_powershell:
     script: |
-      Get-Disk -Number 1 | Set-Disk -IsOffline $false
-  ignore_errors: true # Evita travas caso o disco já estivesse online e pronto
+      $disk = Get-Disk -Number 1 -ErrorAction SilentlyContinue
 
-# 2. Cria a partição usando a letra D:\ ocupando todo o espaço disponível
-- name: Criar particao para o drive D:\
+      if ($disk -and $disk.IsOffline) {
+          Set-Disk -Number 1 -IsOffline $false
+      }
+  ignore_errors: true
+
+- name: Inicializar disco caso esteja RAW
+  ansible.windows.win_powershell:
+    script: |
+      $disk = Get-Disk -Number 1
+
+      if ($disk.PartitionStyle -eq 'RAW') {
+          Initialize-Disk -Number 1 -PartitionStyle GPT
+      }
+
+- name: Criar partição D: ocupando todo o disco
   community.windows.win_partition:
     drive_letter: D
     disk_number: 1
     partition_size: -1
     state: present
 
-# 3. Formata a partição recém-criada como NTFS
-- name: Formatar o drive D:\ como NTFS
+- name: Formatar volume D: em NTFS
   community.windows.win_format:
     drive_letter: D
     file_system: NTFS
     new_label: Programas
     state: present
 
-# 4. Criar o diretório D:\Programas no disco secundário formatado
-- name: Criar o diretorio D:\Programas
+- name: Criar diretório raiz de programas
   ansible.windows.win_file:
-    path: 'D:\Programas'
+    path: "{{ programs_root }}"
     state: directory
 
-# 5. Instalar o Chocolatey (Gerenciador de pacotes padrão para Windows 11)
-- name: Garantir que o Chocolatey esta instalado na maquina
-  chocolatey.chocolatey.win_chocolatey:
-    name: chocolatey
-    state: present
+#########################################################################
+# CONFIGURAÇÕES WINDOWS BASE
+#########################################################################
 
-# 6. Ajustar políticas básicas de segurança local para automação do Windows 11
-- name: Configurar LocalAccountTokenFilterPolicy para permitir administradores locais via rede
+- name: Configurar LocalAccountTokenFilterPolicy
   ansible.windows.win_regedit:
     path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
     name: LocalAccountTokenFilterPolicy
     data: 1
     type: dword
     state: present
+
+- name: Desabilitar UAC remoto restritivo
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+    name: EnableLUA
+    data: 1
+    type: dword
+    state: present
+
+#########################################################################
+# POWERSHELL 7
+#########################################################################
+
+- name: Garantir instalação do PowerShell 7
+  chocolatey.chocolatey.win_chocolatey:
+    name: powershell-core
+    state: present
+
+#########################################################################
+# CHOCOLATEY
+#########################################################################
+
+- name: Garantir Chocolatey instalado
+  chocolatey.chocolatey.win_chocolatey:
+    name: chocolatey
+    state: present
+
+- name: Habilitar uso global do Chocolatey
+  ansible.windows.win_shell: |
+    choco feature enable -n allowGlobalConfirmation
+  changed_when: false
+
+#########################################################################
+# FERRAMENTAS BASE
+#########################################################################
+
+- name: Instalar 7zip
+  chocolatey.chocolatey.win_chocolatey:
+    name: 7zip
+    state: present
+
+- name: Instalar Git
+  chocolatey.chocolatey.win_chocolatey:
+    name: git
+    state: present
+
+- name: Instalar Firefox
+  chocolatey.chocolatey.win_chocolatey:
+    name: firefox
+    state: present
+
+- name: Instalar Visual Studio Code
+  chocolatey.chocolatey.win_chocolatey:
+    name: vscode
+    state: present
+
+#########################################################################
+# WINDOWS FEATURES IMPORTANTES
+#########################################################################
+
+- name: Instalar .NET Framework 4.8
+  chocolatey.chocolatey.win_chocolatey:
+    name: dotnetfx
+    state: present
+
+#########################################################################
+# AJUSTES DE EXECUÇÃO
+#########################################################################
+
+- name: Garantir política RemoteSigned no PowerShell
+  ansible.windows.win_shell: |
+    Set-ExecutionPolicy RemoteSigned -Force
+  changed_when: false
+
+#########################################################################
+# PATH D:\Programas
+#########################################################################
+
+- name: Garantir diretório Tools
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\Tools"
+    state: directory
+
+#########################################################################
+# WINRM ESTÁVEL
+#########################################################################
+
+- name: Reiniciar serviço WinRM
+  ansible.windows.win_service:
+    name: WinRM
+    state: restarted
+
+#########################################################################
+# INFORMAÇÕES FINAIS
+#########################################################################
+
+- name: Exibir resumo do bootstrap base
+  ansible.windows.win_debug:
+    msg:
+      - "Bootstrap base concluído"
+      - "Programas instalados em: {{ programs_root }}"
+      - "Chocolatey operacional"
+      - "PowerShell 7 instalado"
+      - "Ferramentas base instaladas"

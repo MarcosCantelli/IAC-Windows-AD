@@ -1,0 +1,12 @@
+---
+programs_root: "D:\\Programas"
+
+ad_dns_primary: "172.16.0.254"
+ad_gateway: "172.16.0.254"
+ad_prefix_length: 24
+
+company_domain: "mvrc.local"
+
+java_version: "21"
+node_version: "20.19.5"
+python_version: "3.12.3"
