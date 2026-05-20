@@ -1,4 +1,5 @@
 pipeline {
+
     agent any
 
     triggers {
@@ -12,8 +13,14 @@ pipeline {
 
     stages {
 
+        /////////////////////////////////////////////////////////////////////
+        // CHECKOUT
+        /////////////////////////////////////////////////////////////////////
+
         stage('Checkout') {
+
             steps {
+
                 checkout scm
 
                 echo "Branch: ${env.GIT_BRANCH}"
@@ -21,20 +28,14 @@ pipeline {
             }
         }
 
-        stage('Limpar state anterior') {
-            steps {
-                dir('terraform') {
-                    sh '''
-                        rm -f terraform.tfstate
-                        rm -f terraform.tfstate.backup
-                        rm -f tfplan
-                    '''
-                }
-            }
-        }
+        /////////////////////////////////////////////////////////////////////
+        // TERRAFORM
+        /////////////////////////////////////////////////////////////////////
 
         stage('Terraform Init') {
+
             steps {
+
                 dir('terraform') {
                     sh 'terraform init'
                 }
@@ -42,7 +43,9 @@ pipeline {
         }
 
         stage('Terraform Validate') {
+
             steps {
+
                 dir('terraform') {
                     sh 'terraform validate'
                 }
@@ -50,7 +53,9 @@ pipeline {
         }
 
         stage('Terraform Plan') {
+
             steps {
+
                 dir('terraform') {
                     sh 'terraform plan -out=tfplan'
                 }
@@ -58,27 +63,36 @@ pipeline {
         }
 
         stage('Terraform Apply') {
+
             steps {
+
                 dir('terraform') {
                     sh 'terraform apply -auto-approve tfplan'
                 }
             }
         }
 
-        stage('Orquestrar Ansible para as VMs') {
+        /////////////////////////////////////////////////////////////////////
+        // PIPELINE BASE
+        /////////////////////////////////////////////////////////////////////
+
+        stage('Pipeline BASE') {
 
             steps {
 
                 withCredentials([
+
                     usernamePassword(
                         credentialsId: 'windows-admin-local',
                         usernameVariable: 'WIN_USER',
                         passwordVariable: 'WIN_PASS'
                     ),
+
                     string(
                         credentialsId: 'ansible-ad-password',
                         variable: 'AD_PASS'
                     )
+
                 ]) {
 
                     dir('terraform') {
@@ -103,70 +117,144 @@ pipeline {
                                 def currentDhcpIp = dhcpIps[i]
                                 def currentStaticIp = staticIps[i]
 
-                                echo "------------------------------------------------------------"
+                                echo "--------------------------------------------------"
                                 echo "Configurando VM ${i + 1}"
                                 echo "DHCP IP: ${currentDhcpIp}"
                                 echo "STATIC IP: ${currentStaticIp}"
-                                echo "------------------------------------------------------------"
+                                echo "--------------------------------------------------"
 
-                                stage("Aguardar WinRM VM ${i + 1}") {
+                                /////////////////////////////////////////////////////////////////////
+                                // AGUARDA WINRM
+                                /////////////////////////////////////////////////////////////////////
 
-                                    sh """
-                                        for t in \$(seq 1 40); do
+                                sh """
+                                    for t in \$(seq 1 40); do
 
-                                            if nc -z -w5 ${currentDhcpIp} 5986 2>/dev/null; then
-                                                echo "WinRM disponível!"
-                                                exit 0
-                                            fi
+                                        if nc -z -w5 ${currentDhcpIp} 5986 2>/dev/null; then
+                                            echo "WinRM disponível!"
+                                            exit 0
+                                        fi
 
-                                            echo "Tentativa \$t/40..."
-                                            sleep 10
+                                        echo "Tentativa \$t/40..."
+                                        sleep 10
 
-                                        done
+                                    done
 
-                                        echo "Timeout aguardando WinRM"
-                                        exit 1
-                                    """
-                                }
+                                    echo "Timeout aguardando WinRM"
+                                    exit 1
+                                """
 
-                                stage("Executar Ansible VM ${i + 1}") {
+                                /////////////////////////////////////////////////////////////////////
+                                // ANSIBLE BASE
+                                /////////////////////////////////////////////////////////////////////
 
-                                    dir('../ansible') {
+                                dir('../ansible') {
 
-                                        withEnv([
-                                            "TARGET_IP=${currentDhcpIp}",
-                                            "STATIC_IP=${currentStaticIp}"
-                                        ]) {
+                                    withEnv([
+                                        "TARGET_IP=${currentDhcpIp}",
+                                        "STATIC_IP=${currentStaticIp}"
+                                    ]) {
 
-                                            sh '''
-                                                ansible-playbook -i inventory/hosts.yml playbooks/configure-vm.yml \
-                                                  -e "target_ip=$TARGET_IP" \
-                                                  -e "ansible_user=$WIN_USER" \
-                                                  -e "ansible_password=$WIN_PASS" \
-                                                  -e "static_ip=$STATIC_IP" \
-                                                  -e "domain_password=$AD_PASS"
-                                            '''
-                                        }
+                                        sh '''
+                                            ansible-playbook \
+                                              -i inventory/hosts.yml \
+                                              playbooks/configure-vm.yml \
+                                              --tags base \
+                                              -e "target_ip=$TARGET_IP" \
+                                              -e "ansible_user=$WIN_USER" \
+                                              -e "ansible_password=$WIN_PASS" \
+                                              -e "static_ip=$STATIC_IP" \
+                                              -e "domain_password=$AD_PASS"
+                                        '''
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-                                stage("Validar IP Final VM ${i + 1}") {
+        /////////////////////////////////////////////////////////////////////
+        // APROVAÇÃO DEV
+        /////////////////////////////////////////////////////////////////////
 
-                                    sh """
-                                        for t in \$(seq 1 15); do
+        stage('Aprovação DEV') {
 
-                                            if ping -c 1 -W 2 ${currentStaticIp} >/dev/null; then
-                                                echo "VM respondendo no IP ${currentStaticIp}"
-                                                exit 0
-                                            fi
+            steps {
 
-                                            echo "Aguardando migração DHCP -> IP fixo"
-                                            sleep 10
+                script {
 
-                                        done
+                    env.CONTINUAR_DEV = input(
+                        message: 'Deseja instalar ferramentas DEV?',
+                        ok: 'Continuar',
+                        parameters: [
+                            booleanParam(
+                                defaultValue: true,
+                                name: 'INSTALAR_DEV',
+                                description: 'Instalar Python, Java e NodeJS?'
+                            )
+                        ]
+                    ).toString()
+                }
+            }
+        }
 
-                                        echo "VM ainda não respondeu no IP fixo"
-                                    """
+        /////////////////////////////////////////////////////////////////////
+        // PIPELINE DEV
+        /////////////////////////////////////////////////////////////////////
+
+        stage('Pipeline DEV') {
+
+            when {
+                expression {
+                    return env.CONTINUAR_DEV == "true"
+                }
+            }
+
+            steps {
+
+                withCredentials([
+
+                    usernamePassword(
+                        credentialsId: 'windows-admin-local',
+                        usernameVariable: 'WIN_USER',
+                        passwordVariable: 'WIN_PASS'
+                    )
+
+                ]) {
+
+                    dir('terraform') {
+
+                        script {
+
+                            def staticIpsStr = sh(
+                                script: 'terraform output -json vms_calculated_static_ips | jq -r ".[]"',
+                                returnStdout: true
+                            ).trim()
+
+                            def staticIps = staticIpsStr.split('\\s+')
+
+                            for (int i = 0; i < staticIps.length; i++) {
+
+                                def currentStaticIp = staticIps[i]
+
+                                dir('../ansible') {
+
+                                    withEnv([
+                                        "TARGET_IP=${currentStaticIp}"
+                                    ]) {
+
+                                        sh '''
+                                            ansible-playbook \
+                                              -i inventory/hosts.yml \
+                                              playbooks/configure-vm.yml \
+                                              --tags dev \
+                                              -e "target_ip=$TARGET_IP" \
+                                              -e "ansible_user=$WIN_USER" \
+                                              -e "ansible_password=$WIN_PASS"
+                                        '''
+                                    }
                                 }
                             }
                         }
@@ -176,9 +264,28 @@ pipeline {
         }
     }
 
+    /////////////////////////////////////////////////////////////////////
+    // POST
+    /////////////////////////////////////////////////////////////////////
+
     post {
 
         success {
+
+            script {
+
+                if (env.CONTINUAR_DEV == "false") {
+
+                    currentBuild.description =
+                        "Finalizado com sucesso após pipeline BASE"
+
+                } else {
+
+                    currentBuild.description =
+                        "Provisionamento completo executado com sucesso"
+                }
+            }
+
             echo "Pipeline executado com sucesso!"
         }
 

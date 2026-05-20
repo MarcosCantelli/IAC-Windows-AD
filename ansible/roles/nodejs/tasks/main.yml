@@ -1,13 +1,148 @@
 ---
-- name: Instalar Node.js versao 20.19.5 no D:\Programas
-  win_chocolatey:
-    name: nodejs-lts
-    version: '20.19.5'
-    state: present
-    install_args: "INSTALLDIR=D:\\Programas\\nodejs"
+#########################################################################
+# DIRETÓRIOS
+#########################################################################
 
-- name: Adicionar Node.js ao PATH do Sistema
-  win_path:
-    elements:
-      - 'D:\Programas\nodejs'
+- name: Garantir diretório NodeJS
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\NodeJS"
+    state: directory
+
+- name: Garantir diretório NPM Cache
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\NodeJS\\npm-cache"
+    state: directory
+
+- name: Garantir diretório NPM Global
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\NodeJS\\npm-global"
+    state: directory
+
+#########################################################################
+# NODEJS
+#########################################################################
+
+- name: Instalar Node.js LTS
+  chocolatey.chocolatey.win_chocolatey:
+    name: nodejs-lts
+    version: "{{ node_version }}"
     state: present
+
+#########################################################################
+# DESCOBRIR NODE REAL
+#########################################################################
+
+- name: Descobrir caminho real do NodeJS
+  ansible.windows.win_shell: |
+    $node = Get-Command node | Select-Object -ExpandProperty Source
+    Split-Path $node
+  register: node_path_detected
+
+- name: Normalizar caminho NodeJS
+  set_fact:
+    node_real_path: "{{ node_path_detected.stdout | trim }}"
+
+#########################################################################
+# VARIÁVEIS DE AMBIENTE
+#########################################################################
+
+- name: Configurar NODE_HOME
+  ansible.windows.win_environment:
+    state: present
+    name: NODE_HOME
+    value: "{{ node_real_path }}"
+    level: machine
+
+- name: Configurar NPM_CONFIG_CACHE
+  ansible.windows.win_environment:
+    state: present
+    name: NPM_CONFIG_CACHE
+    value: "{{ programs_root }}\\NodeJS\\npm-cache"
+    level: machine
+
+- name: Configurar NPM_CONFIG_PREFIX
+  ansible.windows.win_environment:
+    state: present
+    name: NPM_CONFIG_PREFIX
+    value: "{{ programs_root }}\\NodeJS\\npm-global"
+    level: machine
+
+#########################################################################
+# PATH
+#########################################################################
+
+- name: Adicionar NodeJS ao PATH
+  ansible.windows.win_path:
+    elements:
+      - "{{ node_real_path }}"
+      - "{{ programs_root }}\\NodeJS\\npm-global"
+    state: present
+
+#########################################################################
+# NPM CONFIG
+#########################################################################
+
+- name: Configurar npm cache
+  ansible.windows.win_shell: |
+    npm config set cache "{{ programs_root }}\\NodeJS\\npm-cache" --global
+  changed_when: false
+
+- name: Configurar npm prefix
+  ansible.windows.win_shell: |
+    npm config set prefix "{{ programs_root }}\\NodeJS\\npm-global" --global
+  changed_when: false
+
+#########################################################################
+# FERRAMENTAS GLOBAIS
+#########################################################################
+
+- name: Instalar Yarn
+  chocolatey.chocolatey.win_chocolatey:
+    name: yarn
+    state: present
+
+- name: Instalar PNPM
+  ansible.windows.win_shell: |
+    npm install -g pnpm
+  changed_when: false
+
+#########################################################################
+# TESTES
+#########################################################################
+
+- name: Validar NodeJS
+  ansible.windows.win_shell: |
+    node -v
+  register: node_version_output
+  changed_when: false
+
+- name: Validar npm
+  ansible.windows.win_shell: |
+    npm -v
+  register: npm_version_output
+  changed_when: false
+
+- name: Validar yarn
+  ansible.windows.win_shell: |
+    yarn -v
+  register: yarn_version_output
+  changed_when: false
+
+- name: Validar pnpm
+  ansible.windows.win_shell: |
+    pnpm -v
+  register: pnpm_version_output
+  changed_when: false
+
+#########################################################################
+# DEBUG FINAL
+#########################################################################
+
+- name: Exibir resumo NodeJS
+  ansible.windows.win_debug:
+    msg:
+      - "NODE_HOME: {{ node_real_path }}"
+      - "Node: {{ node_version_output.stdout }}"
+      - "NPM: {{ npm_version_output.stdout }}"
+      - "Yarn: {{ yarn_version_output.stdout }}"
+      - "PNPM: {{ pnpm_version_output.stdout }}"

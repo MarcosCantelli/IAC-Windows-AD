@@ -1,18 +1,10 @@
 ---
-- name: Configurar VM de Windows 
+- name: Configurar VM Windows
   hosts: app_servers
   gather_facts: true
-  vars:
-    # Dados da sua rede informados:
-    ad_netmask: "255.255.0.0"
-    ad_gateway: "172.16.0.254"
-    ad_dns_primary: "172.16.0.254"
-    
-    # Mapeamento padrão de placas no Windows do vSphere
-    vm_network_interface_name: "Ethernet"   # Placa antiga (VM Network)
-    ad_interface_name: "Ethernet 2"         # Placa nova (Rede AD)
 
   pre_tasks:
+
     - name: Aguardar o WinRM ficar disponível na VM Windows
       win_ping:
       register: result
@@ -21,7 +13,9 @@
       delay: 10
 
   roles:
-    - network
-    - base
-    - java
-    - nodejs
+  - network
+  - base
+  - java
+  - nodejs
+  - python
+  - devtools

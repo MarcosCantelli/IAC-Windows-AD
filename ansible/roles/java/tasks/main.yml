@@ -1,36 +1,153 @@
 ---
-- name: Garantir que o diretório D:\Programas existe
-  win_file:
-    path: 'D:\Programas'
+#########################################################################
+# DIRETÓRIOS
+#########################################################################
+
+- name: Garantir diretório raiz de programas
+  ansible.windows.win_file:
+    path: "{{ programs_root }}"
     state: directory
 
-- name: Instalar OpenJDK 21 no D:\Programas
-  win_chocolatey:
-    name: openjdk21
-    state: present
-    install_args: "INSTALLDIR=D:\\Programas\\jdk-21"
+- name: Garantir diretório Java
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\Java"
+    state: directory
 
-- name: Instalar Maven no D:\Programas
-  win_chocolatey:
+- name: Garantir diretório Maven
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\Maven"
+    state: directory
+
+#########################################################################
+# OPENJDK
+#########################################################################
+
+- name: Instalar OpenJDK {{ java_version }}
+  chocolatey.chocolatey.win_chocolatey:
+    name: openjdk{{ java_version }}
+    state: present
+
+#########################################################################
+# DESCOBRIR JAVA_HOME REAL
+#########################################################################
+
+- name: Descobrir caminho real do Java
+  ansible.windows.win_shell: |
+    $java = Get-Command java | Select-Object -ExpandProperty Source
+    Split-Path (Split-Path $java)
+  register: java_home_detected
+
+- name: Normalizar JAVA_HOME
+  set_fact:
+    java_home_real: "{{ java_home_detected.stdout | trim }}"
+
+#########################################################################
+# MAVEN
+#########################################################################
+
+- name: Instalar Maven
+  chocolatey.chocolatey.win_chocolatey:
     name: maven
     state: present
-    install_args: "INSTALLDIR=D:\\Programas\\maven"
 
-- name: Configurar a variavel de ambiente JAVA_HOME
-  win_environment:
-    name: JAVA_HOME
-    value: 'D:\Programas\jdk-21'
-    level: machine
+#########################################################################
+# GRADLE
+#########################################################################
 
-- name: Configurar a variavel de ambiente M2_HOME
-  win_environment:
-    name: M2_HOME
-    value: 'D:\Programas\maven'
-    level: machine
-
-- name: Adicionar Java e Maven ao PATH do Sistema
-  win_path:
-    elements:
-      - 'D:\Programas\jdk-21\bin'
-      - 'D:\Programas\maven\bin'
+- name: Instalar Gradle
+  chocolatey.chocolatey.win_chocolatey:
+    name: gradle
     state: present
+
+#########################################################################
+# VARIÁVEIS DE AMBIENTE
+#########################################################################
+
+- name: Configurar JAVA_HOME
+  ansible.windows.win_environment:
+    state: present
+    name: JAVA_HOME
+    value: "{{ java_home_real }}"
+    level: machine
+
+- name: Configurar MAVEN_HOME
+  ansible.windows.win_environment:
+    state: present
+    name: MAVEN_HOME
+    value: "C:\\ProgramData\\chocolatey\\lib\\maven"
+    level: machine
+
+- name: Configurar GRADLE_HOME
+  ansible.windows.win_environment:
+    state: present
+    name: GRADLE_HOME
+    value: "C:\\ProgramData\\chocolatey\\lib\\gradle"
+    level: machine
+
+#########################################################################
+# PATH
+#########################################################################
+
+- name: Adicionar Java/Maven/Gradle ao PATH
+  ansible.windows.win_path:
+    elements:
+      - "{{ java_home_real }}\\bin"
+      - "C:\\ProgramData\\chocolatey\\bin"
+    state: present
+
+#########################################################################
+# MAVEN CACHE
+#########################################################################
+
+- name: Criar diretório Maven cache
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\Maven\\.m2"
+    state: directory
+
+- name: Configurar MAVEN_OPTS
+  ansible.windows.win_environment:
+    state: present
+    name: MAVEN_OPTS
+    value: "-Dmaven.repo.local={{ programs_root }}\\Maven\\.m2"
+    level: machine
+
+#########################################################################
+# TESTES
+#########################################################################
+
+- name: Validar Java
+  ansible.windows.win_shell: |
+    java -version
+  register: java_version_output
+  changed_when: false
+
+- name: Validar Javac
+  ansible.windows.win_shell: |
+    javac -version
+  register: javac_version_output
+  changed_when: false
+
+- name: Validar Maven
+  ansible.windows.win_shell: |
+    mvn -version
+  register: maven_version_output
+  changed_when: false
+
+- name: Validar Gradle
+  ansible.windows.win_shell: |
+    gradle -version
+  register: gradle_version_output
+  changed_when: false
+
+#########################################################################
+# DEBUG FINAL
+#########################################################################
+
+- name: Exibir resumo Java
+  ansible.windows.win_debug:
+    msg:
+      - "JAVA_HOME: {{ java_home_real }}"
+      - "{{ java_version_output.stderr }}"
+      - "{{ javac_version_output.stdout }}"
+      - "{{ maven_version_output.stdout }}"
+      - "{{ gradle_version_output.stdout }}"

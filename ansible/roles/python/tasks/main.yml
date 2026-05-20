@@ -1,0 +1,120 @@
+---
+#########################################################################
+# DIRETÓRIOS
+#########################################################################
+
+- name: Garantir diretório do Python
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\Python"
+    state: directory
+
+#########################################################################
+# INSTALAÇÃO PYTHON
+#########################################################################
+
+- name: Instalar Python {{ python_version }}
+  chocolatey.chocolatey.win_chocolatey:
+    name: python
+    version: "{{ python_version }}"
+    state: present
+    install_args: >
+      PrependPath=1
+      InstallDir="{{ programs_root }}\\Python"
+
+#########################################################################
+# AGUARDAR INSTALAÇÃO
+#########################################################################
+
+- name: Aguardar python.exe existir
+  ansible.windows.win_wait_for:
+    path: "{{ programs_root }}\\Python\\python.exe"
+    timeout: 120
+
+#########################################################################
+# VARIÁVEIS DE AMBIENTE
+#########################################################################
+
+- name: Configurar PYTHON_HOME
+  ansible.windows.win_environment:
+    state: present
+    name: PYTHON_HOME
+    value: "{{ programs_root }}\\Python"
+    level: machine
+
+- name: Configurar PIP_CACHE_DIR
+  ansible.windows.win_environment:
+    state: present
+    name: PIP_CACHE_DIR
+    value: "{{ programs_root }}\\Python\\pip-cache"
+    level: machine
+
+#########################################################################
+# PATH
+#########################################################################
+
+- name: Adicionar Python ao PATH
+  ansible.windows.win_path:
+    elements:
+      - "{{ programs_root }}\\Python"
+      - "{{ programs_root }}\\Python\\Scripts"
+    state: present
+
+#########################################################################
+# PIP
+#########################################################################
+
+- name: Atualizar pip
+  ansible.windows.win_shell: |
+    "{{ programs_root }}\\Python\\python.exe" -m pip install --upgrade pip
+  args:
+    executable: cmd
+  changed_when: false
+
+- name: Instalar virtualenv
+  ansible.windows.win_shell: |
+    "{{ programs_root }}\\Python\\python.exe" -m pip install virtualenv
+  args:
+    executable: cmd
+  changed_when: false
+
+- name: Instalar wheel
+  ansible.windows.win_shell: |
+    "{{ programs_root }}\\Python\\python.exe" -m pip install wheel
+  args:
+    executable: cmd
+  changed_when: false
+
+- name: Instalar setuptools
+  ansible.windows.win_shell: |
+    "{{ programs_root }}\\Python\\python.exe" -m pip install setuptools
+  args:
+    executable: cmd
+  changed_when: false
+
+#########################################################################
+# VS CODE INTEGRATION
+#########################################################################
+
+- name: Criar diretório global de projetos Python
+  ansible.windows.win_file:
+    path: "{{ programs_root }}\\ProjetosPython"
+    state: directory
+
+#########################################################################
+# TESTE FINAL
+#########################################################################
+
+- name: Validar versão do Python
+  ansible.windows.win_shell: |
+    "{{ programs_root }}\\Python\\python.exe" --version
+  register: python_version_output
+  changed_when: false
+
+- name: Exibir versão instalada
+  ansible.windows.win_debug:
+    msg:
+      - "Python instalado com sucesso"
+      - "{{ python_version_output.stdout }}"
+      - "PYTHON_HOME configurado"
+      - "pip operacional"
+      - "virtualenv instalado"
