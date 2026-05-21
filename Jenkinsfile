@@ -112,6 +112,13 @@ pipeline {
                             def dhcpIps = dhcpIpsStr.split('\\s+')
                             def staticIps = staticIpsStr.split('\\s+')
 
+                            /////////////////////////////////////////////////////////////////////
+                            // SALVA LISTA PARA PIPELINES FUTUROS
+                            /////////////////////////////////////////////////////////////////////
+
+                            env.DHCP_IPS   = dhcpIps.join(',')
+                            env.STATIC_IPS = staticIps.join(',')
+
                             for (int i = 0; i < dhcpIps.length; i++) {
 
                                 def currentDhcpIp = dhcpIps[i]
@@ -124,19 +131,19 @@ pipeline {
                                 echo "--------------------------------------------------"
 
                                 /////////////////////////////////////////////////////////////////////
-                                // AGUARDA WINRM
+                                // AGUARDA WINRM VIA DHCP
                                 /////////////////////////////////////////////////////////////////////
 
                                 sh """
-                                    for t in \$(seq 1 10); do
+                                    for t in \$(seq 1 20); do
 
                                         if nc -z -w5 ${currentDhcpIp} 5986 2>/dev/null; then
-                                            echo "WinRM disponível!"
+                                            echo "WinRM disponível no IP DHCP!"
                                             exit 0
                                         fi
 
-                                        echo "Tentativa \$t/10..."
-                                        sleep 10
+                                        echo "Tentativa \$t/20..."
+                                        sleep 15
 
                                     done
 
@@ -168,6 +175,28 @@ pipeline {
                                         '''
                                     }
                                 }
+
+                                /////////////////////////////////////////////////////////////////////
+                                // VALIDAR QUE A VM CONTINUA RESPONDENDO
+                                // NO DHCP APÓS O DOMAIN JOIN
+                                /////////////////////////////////////////////////////////////////////
+
+                                sh """
+                                    for t in \$(seq 1 20); do
+
+                                        if nc -z -w5 ${currentDhcpIp} 5986 2>/dev/null; then
+                                            echo "VM voltou após reboot/domain join!"
+                                            exit 0
+                                        fi
+
+                                        echo "Aguardando retorno WinRM pós-domain..."
+                                        sleep 20
+
+                                    done
+
+                                    echo "VM não retornou após domain join"
+                                    exit 1
+                                """
                             }
                         }
                     }
@@ -183,19 +212,24 @@ pipeline {
 
             steps {
 
-                script {
+                timeout(time: 30, unit: 'MINUTES') {
 
-                    env.CONTINUAR_DEV = input(
-                        message: 'Deseja instalar ferramentas DEV?',
-                        ok: 'Continuar',
-                        parameters: [
-                            booleanParam(
-                                defaultValue: true,
-                                name: 'INSTALAR_DEV',
-                                description: 'Instalar Python, Java e NodeJS?'
-                            )
-                        ]
-                    ).toString()
+                    script {
+
+                        def resposta = input(
+                            message: 'Deseja continuar para instalação DEV?',
+                            ok: 'Continuar',
+                            parameters: [
+                                booleanParam(
+                                    name: 'INSTALAR_DEV',
+                                    defaultValue: true,
+                                    description: 'Instalar Java, Python, NodeJS e DevTools?'
+                                )
+                            ]
+                        )
+
+                        env.CONTINUAR_DEV = resposta.toString()
+                    }
                 }
             }
         }
@@ -224,37 +258,158 @@ pipeline {
 
                 ]) {
 
-                    dir('terraform') {
+                    script {
 
-                        script {
+                        /////////////////////////////////////////////////////////////////////
+                        // IMPORTANTE:
+                        // CONTINUAMOS USANDO O IP DHCP (192.168.x.x)
+                        // ENQUANTO EXISTIR A PLACA VM NETWORK
+                        /////////////////////////////////////////////////////////////////////
 
-                            def staticIpsStr = sh(
-                                script: 'terraform output -json vms_calculated_static_ips | jq -r ".[]"',
-                                returnStdout: true
-                            ).trim()
+                        def dhcpIps = env.DHCP_IPS.split(',')
 
-                            def staticIps = staticIpsStr.split('\\s+')
+                        for (int i = 0; i < dhcpIps.length; i++) {
 
-                            for (int i = 0; i < staticIps.length; i++) {
+                            def currentDhcpIp = dhcpIps[i]
 
-                                def currentStaticIp = staticIps[i]
+                            echo "--------------------------------------------------"
+                            echo "Instalando DEV VM ${i + 1}"
+                            echo "IP DHCP: ${currentDhcpIp}"
+                            echo "--------------------------------------------------"
 
-                                dir('../ansible') {
+                            /////////////////////////////////////////////////////////////////////
+                            // GARANTE WINRM
+                            /////////////////////////////////////////////////////////////////////
 
-                                    withEnv([
-                                        "TARGET_IP=${currentStaticIp}"
-                                    ]) {
+                            sh """
+                                for t in \$(seq 1 20); do
 
-                                        sh '''
-                                            ansible-playbook \
-                                              -i inventory/hosts.yml \
-                                              playbooks/configure-vm.yml \
-                                              --tags dev \
-                                              -e "target_ip=$TARGET_IP" \
-                                              -e "ansible_user=$WIN_USER" \
-                                              -e "ansible_password=$WIN_PASS"
-                                        '''
-                                    }
+                                    if nc -z -w5 ${currentDhcpIp} 5986 2>/dev/null; then
+                                        echo "WinRM disponível!"
+                                        exit 0
+                                    fi
+
+                                    echo "Tentativa \$t/20..."
+                                    sleep 15
+
+                                done
+
+                                echo "Timeout aguardando WinRM DEV"
+                                exit 1
+                            """
+
+                            /////////////////////////////////////////////////////////////////////
+                            // EXECUTA PLAYBOOK DEV
+                            /////////////////////////////////////////////////////////////////////
+
+                            dir('ansible') {
+
+                                withEnv([
+                                    "TARGET_IP=${currentDhcpIp}"
+                                ]) {
+
+                                    sh '''
+                                        ansible-playbook \
+                                          -i inventory/hosts.yml \
+                                          playbooks/configure-vm.yml \
+                                          --tags dev \
+                                          -e "target_ip=$TARGET_IP" \
+                                          -e "ansible_user=$WIN_USER" \
+                                          -e "ansible_password=$WIN_PASS"
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /////////////////////////////////////////////////////////////////////
+        // APROVAÇÃO FINAL
+        /////////////////////////////////////////////////////////////////////
+
+        stage('Aprovação Final') {
+
+            when {
+                expression {
+                    return env.CONTINUAR_DEV == "true"
+                }
+            }
+
+            steps {
+
+                timeout(time: 30, unit: 'MINUTES') {
+
+                    script {
+
+                        def resposta = input(
+                            message: 'Deseja finalizar removendo NIC DHCP?',
+                            ok: 'Finalizar',
+                            parameters: [
+                                booleanParam(
+                                    name: 'FINALIZAR',
+                                    defaultValue: true,
+                                    description: 'Remover VM Network e deixar apenas VLAN_AD?'
+                                )
+                            ]
+                        )
+
+                        env.FINALIZAR_PIPELINE = resposta.toString()
+                    }
+                }
+            }
+        }
+
+        /////////////////////////////////////////////////////////////////////
+        // PIPELINE FINAL
+        /////////////////////////////////////////////////////////////////////
+
+        stage('Pipeline FINAL') {
+
+            when {
+                expression {
+                    return env.FINALIZAR_PIPELINE == "true"
+                }
+            }
+
+            steps {
+
+                withCredentials([
+
+                    usernamePassword(
+                        credentialsId: 'windows-admin-local',
+                        usernameVariable: 'WIN_USER',
+                        passwordVariable: 'WIN_PASS'
+                    )
+
+                ]) {
+
+                    script {
+
+                        def dhcpIps = env.DHCP_IPS.split(',')
+
+                        for (int i = 0; i < dhcpIps.length; i++) {
+
+                            def currentDhcpIp = dhcpIps[i]
+
+                            echo "Finalizando VM ${i + 1}"
+
+                            dir('ansible') {
+
+                                withEnv([
+                                    "TARGET_IP=${currentDhcpIp}"
+                                ]) {
+
+                                    sh '''
+                                        ansible-playbook \
+                                          -i inventory/hosts.yml \
+                                          playbooks/configure-vm.yml \
+                                          --tags finalize \
+                                          -e "target_ip=$TARGET_IP" \
+                                          -e "ansible_user=$WIN_USER" \
+                                          -e "ansible_password=$WIN_PASS"
+                                    '''
                                 }
                             }
                         }
@@ -274,10 +429,15 @@ pipeline {
 
             script {
 
-                if (env.CONTINUAR_DEV == "false") {
+                if (env.CONTINUAR_DEV != "true") {
 
                     currentBuild.description =
-                        "Finalizado com sucesso após pipeline BASE"
+                        "Finalizado com sucesso após Pipeline BASE"
+
+                } else if (env.FINALIZAR_PIPELINE != "true") {
+
+                    currentBuild.description =
+                        "Finalizado com sucesso após Pipeline DEV"
 
                 } else {
 
