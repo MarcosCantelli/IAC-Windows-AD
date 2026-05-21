@@ -1,21 +1,81 @@
 ---
 - name: Configurar VM Windows
-  hosts: app_servers
+  hosts: windows_vm
   gather_facts: true
 
-  pre_tasks:
+  tasks:
 
-    - name: Aguardar o WinRM ficar disponível na VM Windows
-      win_ping:
-      register: result
-      until: result is success
-      retries: 30
-      delay: 10
+    #####################################################################
+    # BASE
+    #####################################################################
 
-  roles:
-  - network
-  - base
-  - java
-  - nodejs
-  - python
-  - devtools
+    - name: Executar role BASE
+      ansible.builtin.include_role:
+        name: base
+        apply:
+          tags:
+            - base
+      tags:
+        - base
+
+    - name: Executar role NETWORK
+      ansible.builtin.include_role:
+        name: network
+        apply:
+          tags:
+            - base
+      tags:
+        - base
+
+    #####################################################################
+    # DEV
+    #####################################################################
+
+    - name: Executar role PYTHON
+      ansible.builtin.include_role:
+        name: python
+        apply:
+          tags:
+            - dev
+      tags:
+        - dev
+
+    - name: Executar role JAVA
+      ansible.builtin.include_role:
+        name: java
+        apply:
+          tags:
+            - dev
+      tags:
+        - dev
+
+    - name: Executar role NODEJS
+      ansible.builtin.include_role:
+        name: nodejs
+        apply:
+          tags:
+            - dev
+      tags:
+        - dev
+
+    - name: Executar role DEVTOOLS
+      ansible.builtin.include_role:
+        name: devtools
+        apply:
+          tags:
+            - dev
+      tags:
+        - dev
+
+    #####################################################################
+    # FINALIZE
+    #####################################################################
+
+    - name: Executar role FINALIZE
+      ansible.builtin.include_role:
+        name: finalize
+        apply:
+          tags:
+            - finalize
+      tags:
+        - finalize
