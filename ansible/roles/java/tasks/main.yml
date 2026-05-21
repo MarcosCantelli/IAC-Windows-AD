@@ -144,7 +144,7 @@
 #########################################################################
 
 - name: Exibir resumo Java
-  ansible.windows.win_debug:
+  debug:
     msg:
       - "JAVA_HOME: {{ java_home_real }}"
       - "{{ java_version_output.stderr }}"
