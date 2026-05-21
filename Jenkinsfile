@@ -128,14 +128,14 @@ pipeline {
                                 /////////////////////////////////////////////////////////////////////
 
                                 sh """
-                                    for t in \$(seq 1 40); do
+                                    for t in \$(seq 1 10); do
 
                                         if nc -z -w5 ${currentDhcpIp} 5986 2>/dev/null; then
                                             echo "WinRM disponível!"
                                             exit 0
                                         fi
 
-                                        echo "Tentativa \$t/40..."
+                                        echo "Tentativa \$t/10..."
                                         sleep 10
 
                                     done

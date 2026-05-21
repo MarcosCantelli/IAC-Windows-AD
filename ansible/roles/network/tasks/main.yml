@@ -104,6 +104,48 @@
     Clear-DnsClientCache
 
 #########################################################################
+# GARANTIR PERFIL PRIVATE
+#########################################################################
+
+- name: Definir perfil de rede como Private
+  ansible.windows.win_shell: |
+    Get-NetConnectionProfile |
+    Set-NetConnectionProfile -NetworkCategory Private
+
+#########################################################################
+# GARANTIR WINRM
+#########################################################################
+
+- name: Habilitar PS Remoting
+  ansible.windows.win_shell: |
+    Enable-PSRemoting -Force
+
+- name: Garantir serviço WinRM iniciado
+  ansible.windows.win_service:
+    name: WinRM
+    start_mode: auto
+    state: started
+
+- name: Abrir firewall WinRM HTTPS 5986
+  ansible.windows.win_shell: |
+    netsh advfirewall firewall add rule `
+      name="WinRM HTTPS 5986" `
+      dir=in `
+      action=allow `
+      protocol=TCP `
+      localport=5986
+  ignore_errors: true
+
+- name: Validar listener WinRM
+  ansible.windows.win_shell: |
+    winrm enumerate winrm/config/listener
+  register: winrm_listener
+
+- name: Exibir listener WinRM
+  debug:
+    var: winrm_listener.stdout
+
+#########################################################################
 # AGUARDAR REDE
 #########################################################################
 
@@ -120,7 +162,8 @@
     Resolve-DnsName {{ company_domain }}
   register: dns_test
 
-- debug:
+- name: Exibir resultado DNS
+  debug:
     var: dns_test.stdout
 
 #########################################################################
@@ -132,7 +175,8 @@
     Test-NetConnection {{ ad_dns_primary }} -Port 53
   register: dc_test
 
-- debug:
+- name: Exibir teste DC
+  debug:
     var: dc_test.stdout
 
 #########################################################################
@@ -144,7 +188,8 @@
     Test-NetConnection {{ ad_dns_primary }} -Port 389
   register: ldap_test
 
-- debug:
+- name: Exibir teste LDAP
+  debug:
     var: ldap_test.stdout
 
 #########################################################################
@@ -173,7 +218,7 @@
   delay: 20
 
 #########################################################################
-# AGORA SIM DESATIVA DHCP
+# DESATIVAR NIC DHCP SOMENTE NO FINAL
 #########################################################################
 
 - name: Desativar NIC DHCP antiga
@@ -201,7 +246,8 @@
     ipconfig /all
   register: final_ipconfig
 
-- debug:
+- name: Exibir ipconfig final
+  debug:
     var: final_ipconfig.stdout
 
 #########################################################################
@@ -213,5 +259,6 @@
     (Get-WmiObject Win32_ComputerSystem).Domain
   register: domain_validation
 
-- debug:
+- name: Exibir domínio final
+  debug:
     var: domain_validation.stdout
