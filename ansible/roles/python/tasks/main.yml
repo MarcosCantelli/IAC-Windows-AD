@@ -111,7 +111,7 @@
   changed_when: false
 
 - name: Exibir versão instalada
-  ansible.windows.win_debug:
+  debug:
     msg:
       - "Python instalado com sucesso"
       - "{{ python_version_output.stdout }}"

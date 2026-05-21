@@ -139,7 +139,7 @@
 #########################################################################
 
 - name: Exibir resumo NodeJS
-  ansible.windows.win_debug:
+  debug:
     msg:
       - "NODE_HOME: {{ node_real_path }}"
       - "Node: {{ node_version_output.stdout }}"
