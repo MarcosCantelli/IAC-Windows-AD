@@ -60,7 +60,7 @@ resource "vsphere_virtual_machine" "vm" {
   # Herda o firmware exato do template (garante compatibilidade BIOS/UEFI)
   firmware                   = data.vsphere_virtual_machine.template.firmware
   
-  # Herda o tipo de controladora SCSI exato do template (Evita falhas de I/O do Windows)
+  # Herda o tipo de controladora SCSI exata do template (Evita falhas de I/O do Windows)
   scsi_type                  = data.vsphere_virtual_machine.template.scsi_type
 
   # Timeouts ajustados para Windows boot e inicialização da rede
@@ -77,6 +77,12 @@ resource "vsphere_virtual_machine" "vm" {
   network_interface {
     network_id   = data.vsphere_network.network_ad.id
     adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+
+    # Configuração de IP estático
+    ip_address         = var.ad_network_prefix[count.index + var.static_ip_start]
+    subnet_mask        = "255.255.255.0"
+    default_gateway    = var.ad_gateway
+    dns_server_list    = [var.ad_dns_primary]
   }
 
   # Disk 0: OS Drive (C:\) - Alocado no datastore primário do SO
