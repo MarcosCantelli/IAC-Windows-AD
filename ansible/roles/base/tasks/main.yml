@@ -153,12 +153,12 @@
 # WINDOWS FEATURES IMPORTANTES
 #########################################################################
 
-#- name: Instalar RSAT AD Tools
-#  ansible.windows.win_feature:
-#    name:
-#      - RSAT-AD-Tools
-#    state: present
-#  ignore_errors: true
+- name: Instalar RSAT AD Tools
+  ansible.windows.win_feature:
+    name:
+      - RSAT-AD-Tools
+    state: present
+  ignore_errors: true
 
 #########################################################################
 # VALIDACOES
