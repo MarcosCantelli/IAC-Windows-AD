@@ -97,6 +97,10 @@ variable "ad_dns_primary" {
 
 variable "ad_network_prefix" {
   description = "Prefixo da rede AD"
-  type        = string
-  default     = "172.16.0"
+  type        = map(string)
+  default     = {
+    "50" : "172.16.0.50",
+    "51" : "172.16.0.51",
+    # Adicione mais IPs conforme necessário
+  }
 }

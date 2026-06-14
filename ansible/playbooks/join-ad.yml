@@ -1,0 +1,14 @@
+---
+- name: Adicionar VM ao Active Directory
+  hosts: windows_vm
+  gather_facts: true
+
+  tasks:
+    - name: Adicionar VM ao Active Directory
+      community.windows.win_domain_membership:
+        state: domainjoined
+        domain_name: "{{ ad_domain }}"
+        dns_domain_name: "{{ ad_dns_primary }}"
+        OU_path: "{{ ad_ou_path }}"
+        admin_user: "{{ ansible_ad_user }}"
+        admin_password: "{{ ansible_ad_password }}"
