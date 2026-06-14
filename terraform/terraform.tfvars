@@ -1,22 +1,27 @@
-vsphere_user = "your_vsphere_username"
-vsphere_password = "your_vsphere_password"
-vsphere_server = "your_vsphere_server"
-datacenter = "your_datacenter_name"
-cluster = "your_cluster_name"
-network_vm = "VM Network - DHCP"
-network_ad = "Active Directory Network"
-datastore = "Datastore_C"
-datastore_programas = "Datastore_D"
-template_name = "Windows Server Template"
-vm_name = "Win-Server-AD"
-num_cpus = 4
-memory_mb = 8192
-disk_d_size_gb = 50
-vm_count = 1
-static_ip_start = 50
-ad_gateway = "172.16.0.254"
-ad_dns_primary = "172.16.0.254"
-ad_network_prefix = {
-  "50" : "172.16.0.50",
-  "51" : "172.16.0.51"
-}
+# Infraestrutura vSphere
+vsphere_server = "192.168.31.13"
+datacenter     = "MVRC-DC"
+cluster        = "Xeon"
+datastore      = "VS1_SSD2TB"
+datastore_programas = "VS1_HD500GB"
+
+# Ajuste das duas redes
+network_vm     = "VM Network"
+network_ad     = "VLAN_AD" # 
+
+# Template e VM Windows
+template_name  = "W11_25H2_ANSIBLE" # <-- Mudar para o seu template Windows
+vm_name        = "Win11_AD"
+num_cpus       = 4
+memory_mb      = 4096
+
+# Tamanho do Disco D:\
+disk_d_size_gb = 80
+
+# Rede AD
+ad_gateway       = "172.16.0.254"
+ad_dns_primary   = "172.16.0.254"
+
+# Range dinâmico das VMs
+static_ip_start  = 50
+ad_network_prefix = "172.16.0"
