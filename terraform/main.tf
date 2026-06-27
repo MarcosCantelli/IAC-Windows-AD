@@ -1,108 +1,197 @@
 provider "vsphere" {
-  version              = "~> 2.0"  # CORREÇÃO CRÍTICA: Requer versão 2.0+ para IP settings
+
   user                 = var.vsphere_user
   password             = var.vsphere_password
   vsphere_server       = var.vsphere_server
+
   allow_unverified_ssl = true
+
 }
 
-# Fetch the datacenter information
 data "vsphere_datacenter" "dc" {
+
   name = var.datacenter
+
 }
 
-# Fetch the datastore information for Disk C: (System)
-data "vsphere_datastore" "datastore" {
-  name          = var.datastore
-  datacenter_id = data.vsphere_datacenter.dc.id
-}
 
-# Fetch the datastore information for Disk D: (Programs)
-data "vsphere_datastore" "datastore_programas" {
-  name          = var.datastore_programas
-  datacenter_id = data.vsphere_datacenter.dc.id
-}
-
-# Fetch the compute cluster information
 data "vsphere_compute_cluster" "cluster" {
+
   name          = var.cluster
   datacenter_id = data.vsphere_datacenter.dc.id
+
 }
 
-# Fetch the virtual machine template information
-data "vsphere_virtual_machine" "template" {
-  name          = var.template_name
+data "vsphere_datastore" "system" {
+
+  name          = var.datastore
   datacenter_id = data.vsphere_datacenter.dc.id
+
 }
 
-# Fetch the first network information (VM Network - DHCP)
-data "vsphere_network" "network_vm" {
+
+data "vsphere_datastore" "programs" {
+
+  name          = var.datastore_programas
+  datacenter_id = data.vsphere_datacenter.dc.id
+
+}
+
+###############################################################
+# VM Network (DHCP)
+###############################################################
+
+data "vsphere_network" "vm_network" {
+
   name          = var.network_vm
   datacenter_id = data.vsphere_datacenter.dc.id
+
 }
 
-# Fetch the second network information (Active Directory Network)
-data "vsphere_network" "network_ad" {
+###############################################################
+# VLAN Active Directory
+###############################################################
+
+data "vsphere_network" "ad_network" {
+
   name          = var.network_ad
   datacenter_id = data.vsphere_datacenter.dc.id
+
 }
 
-# Define the virtual machine resource
+###############################################################
+# Template Windows
+###############################################################
+
+data "vsphere_virtual_machine" "template" {
+
+  name          = var.template_name
+  datacenter_id = data.vsphere_datacenter.dc.id
+
+}
+
+###############################################################
+# Virtual Machine
+###############################################################
+
 resource "vsphere_virtual_machine" "vm" {
-  count            = var.vm_count
-  name             = "${var.vm_name}-${count.index + 1}" # Ex: Win-Server-AD-DEV-1
+
+  count = var.vm_count
+
+  name = format(
+    "%s-%02d",
+    var.vm_name,
+    count.index + 1
+  )
+
   resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
-  datastore_id     = data.vsphere_datastore.datastore.id
 
-  num_cpus                   = var.num_cpus
-  memory                     = var.memory_mb
-  guest_id                   = data.vsphere_virtual_machine.template.guest_id
-  
-  # Herda o firmware exato do template (garante compatibilidade BIOS/UEFI)
-  firmware                   = data.vsphere_virtual_machine.template.firmware
-  
-  # Herda o tipo de controladora SCSI exata do template (Evita falhas de I/O do Windows)
-  scsi_type                  = data.vsphere_virtual_machine.template.scsi_type
+  datastore_id = data.vsphere_datastore.system.id
 
-  # Timeouts ajustados para Windows boot e inicialização da rede
-  wait_for_guest_net_timeout = 10
+  guest_id = data.vsphere_virtual_machine.template.guest_id
+
+  firmware = data.vsphere_virtual_machine.template.firmware
+
+  scsi_type = data.vsphere_virtual_machine.template.scsi_type
+
+  num_cpus = var.num_cpus
+
+  memory = var.memory_mb
+
+  enable_disk_uuid = true
+
   wait_for_guest_ip_timeout  = 10
 
-  # Interface 1: VM Network (DHCP para conexão inicial do Ansible)
+  wait_for_guest_net_timeout = 10
+
+  #############################################################
+  # NIC 1
+  # DHCP
+  #############################################################
+
   network_interface {
-    network_id   = data.vsphere_network.network_vm.id
+
+    network_id = data.vsphere_network.vm_network.id
+
     adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+
   }
 
-  # Interface 2: AD Network (Configuração de IP fixo via Ansible) - CORREÇÃO APLICADA
+  #############################################################
+  # NIC 2
+  # VLAN AD
+  #############################################################
+
   network_interface {
-    network_id   = data.vsphere_network.network_ad.id  # CORREÇÃO: Usar data.id em vez de var.network_id
-    ip_address   = var.ad_network_prefix[count.index + var.static_ip_start]
-    subnet_mask  = "255.255.255.0"
-    gateway      = var.ad_gateway
-    dns_servers  = [var.ad_dns_primary]
+
+    network_id = data.vsphere_network.ad_network.id
+
+    adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+
   }
 
-  # Disk 0: OS Drive (C:\) - Alocado no datastore primário do SO
+  #############################################################
+  # Disco C
+  #############################################################
+
   disk {
-    label            = "disk0"
-    size             = data.vsphere_virtual_machine.template.disks.0.size
-    eagerly_scrub    = data.vsphere_virtual_machine.template.disks.0.eagerly_scrub
-    thin_provisioned = data.vsphere_virtual_machine.template.disks.0.thin_provisioned
-    unit_number      = 0 # Fixa na posição mestre de boot
+
+    label = "disk0"
+
+    size = data.vsphere_virtual_machine.template.disks[0].size
+
+    thin_provisioned = data.vsphere_virtual_machine.template.disks[0].thin_provisioned
+
+    eagerly_scrub = data.vsphere_virtual_machine.template.disks[0].eagerly_scrub
+
+    unit_number = 0
+
   }
 
-  # Disk 1: Programs Drive (D:\) - Armazenado no datastore de programas
+  #############################################################
+  # Disco D
+  #############################################################
+
   disk {
-    label            = "disk1"
-    size             = var.disk_d_size_gb
-    datastore_id     = data.vsphere_datastore.datastore_programas.id
-    eagerly_scrub    = false
+
+    label = "disk1"
+
+    datastore_id = data.vsphere_datastore.programs.id
+
+    size = var.disk_d_size_gb
+
     thin_provisioned = true
-    unit_number      = 1 # Posição secundária na controladora
+
+    eagerly_scrub = false
+
+    unit_number = 1
+
   }
+
+  #############################################################
+  # Clone
+  #############################################################
 
   clone {
+
     template_uuid = data.vsphere_virtual_machine.template.id
+
   }
+
+  #############################################################
+  # Lifecycle
+  #############################################################
+
+  lifecycle {
+
+    ignore_changes = [
+
+      annotation,
+
+      extra_config
+
+    ]
+
+  }
+
 }
