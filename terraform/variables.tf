@@ -1,106 +1,239 @@
+###############################################################
+# vSphere Provider
+###############################################################
+
 variable "vsphere_user" {
+
   description = "Usuário para autenticação no vSphere"
-  type        = string
-  sensitive   = true
+
+  type = string
+
+  sensitive = true
+
+  nullable = false
+
 }
 
 variable "vsphere_password" {
+
   description = "Senha para autenticação no vSphere"
-  type        = string
-  sensitive   = true
+
+  type = string
+
+  sensitive = true
+
+  nullable = false
+
 }
 
 variable "vsphere_server" {
-  description = "Endereço do servidor vSphere (IP ou hostname)"
-  type        = string
+
+  description = "Endereço do servidor vSphere"
+
+  type = string
+
+  nullable = false
+
 }
 
+###############################################################
+# Infraestrutura
+###############################################################
+
 variable "datacenter" {
+
   description = "Nome do Datacenter"
-  type        = string
+
+  type = string
+
+  nullable = false
+
 }
 
 variable "cluster" {
+
   description = "Nome do Cluster"
-  type        = string
-}
 
-variable "network_vm" {
-  description = "Nome da primeira rede (VM Network / DHCP)"
-  type        = string
-}
+  type = string
 
-variable "network_ad" {
-  description = "Nome da rede do Active Directory"
-  type        = string
+  nullable = false
+
 }
 
 variable "datastore" {
-  description = "Nome do Datastore para o disco C:"
-  type        = string
+
+  description = "Datastore do disco do sistema"
+
+  type = string
+
+  nullable = false
+
 }
 
 variable "datastore_programas" {
-  description = "Nome do Datastore para o disco D: (Programas)"
-  type        = string
+
+  description = "Datastore do disco de programas"
+
+  type = string
+
+  nullable = false
+
 }
+
+###############################################################
+# Redes
+###############################################################
+
+variable "network_vm" {
+
+  description = "Rede DHCP utilizada durante o provisionamento"
+
+  type = string
+
+  nullable = false
+
+}
+
+variable "network_ad" {
+
+  description = "Rede do Active Directory"
+
+  type = string
+
+  nullable = false
+
+}
+
+###############################################################
+# Template
+###############################################################
 
 variable "template_name" {
-  description = "Nome do Template (Windows Server)"
-  type        = string
+
+  description = "Nome do template Windows"
+
+  type = string
+
+  nullable = false
+
 }
+
+###############################################################
+# Máquina Virtual
+###############################################################
 
 variable "vm_name" {
-  description = "Nome base da Máquina Virtual"
-  type        = string
-}
 
-variable "num_cpus" {
-  description = "Número de CPUs"
-  type        = number
-}
+  description = "Nome base da VM"
 
-variable "memory_mb" {
-  description = "Memória em MB"
-  type        = number
-}
+  type = string
 
-variable "disk_d_size_gb" {
-  description = "Tamanho do disco D: em GB para Programas"
-  type        = number
-  default     = 50
+  nullable = false
+
 }
 
 variable "vm_count" {
-  description = "Quantidade de VMs Windows a serem criadas"
-  type        = number
-  default     = 1
+
+  description = "Quantidade de VMs"
+
+  type = number
+
+  default = 1
+
+  validation {
+
+    condition = var.vm_count >= 1
+
+    error_message = "vm_count deve ser maior que zero."
+
+  }
+
 }
 
+###############################################################
+# Hardware
+###############################################################
+
+variable "num_cpus" {
+
+  description = "Quantidade de CPUs"
+
+  type = number
+
+  validation {
+
+    condition = var.num_cpus >= 1
+
+    error_message = "A VM deve possuir pelo menos uma CPU."
+
+  }
+
+}
+
+variable "memory_mb" {
+
+  description = "Memória RAM em MB"
+
+  type = number
+
+  validation {
+
+    condition = var.memory_mb >= 2048
+
+    error_message = "A memória mínima recomendada é 2048 MB."
+
+  }
+
+}
+
+variable "disk_d_size_gb" {
+
+  description = "Tamanho do disco D"
+
+  type = number
+
+  default = 80
+
+  validation {
+
+    condition = var.disk_d_size_gb >= 20
+
+    error_message = "O disco D deve possuir pelo menos 20GB."
+
+  }
+
+}
+
+###############################################################
+# Rede AD
+###############################################################
+
 variable "static_ip_start" {
-  description = "IP inicial para alocação dinâmica das VMs"
-  type        = number
-  default     = 50
+
+  description = "Primeiro IP da sequência utilizada pelo Ansible"
+
+  type = number
+
+  default = 50
+
 }
 
 variable "ad_gateway" {
-  description = "Gateway da rede AD"
-  type        = string
-  default     = "172.16.0.254"
+
+  description = "Gateway da VLAN AD"
+
+  type = string
+
+  default = "172.16.0.254"
+
 }
 
 variable "ad_dns_primary" {
-  description = "DNS primário do AD"
-  type        = string
-  default     = "172.16.0.254"
-}
 
-variable "ad_network_prefix" {
-  description = "Prefixo da rede AD"
-  type        = map(string)
-  default     = {
-    "50" : "172.16.0.50",
-    "51" : "172.16.0.51",
-    # Adicione mais IPs conforme necessário
-  }
+  description = "DNS primário"
+
+  type = string
+
+  default = "172.16.0.254"
+
 }

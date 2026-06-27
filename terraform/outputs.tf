@@ -1,18 +1,38 @@
+###############################################################
+# DHCP IPs
+###############################################################
+
 output "vms_dhcp_ips" {
-  description = "Lista de IPs temporários DHCP (VM Network) para conexão inicial do Ansible"
-  value       = vsphere_virtual_machine.vm[*].default_ip_address
+
+  description = "Endereços IP obtidos via DHCP utilizados pelo Jenkins e Ansible."
+
+  value = vsphere_virtual_machine.vm[*].default_ip_address
+
 }
+
+###############################################################
+# VM Names
+###############################################################
 
 output "vms_names" {
-  description = "Lista de nomes das VMs criadas"
-  value       = vsphere_virtual_machine.vm[*].name
+
+  description = "Lista das máquinas virtuais criadas."
+
+  value = vsphere_virtual_machine.vm[*].name
+
 }
 
+###############################################################
+# Static IPs
+###############################################################
+
 output "vms_calculated_static_ips" {
-  description = "Lista dos IPs estáticos calculados para a rede AD"
+
+  description = "Lista dos IPs estáticos esperados para a VLAN AD."
 
   value = [
     for i in range(var.vm_count) :
-    "172.16.0.${i + 50}"
+    "172.16.0.${var.static_ip_start + i}"
   ]
+
 }
