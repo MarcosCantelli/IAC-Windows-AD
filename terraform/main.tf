@@ -1,4 +1,5 @@
 provider "vsphere" {
+  version              = "~> 2.0"  # CORREÇÃO CRÍTICA: Requer versão 2.0+ para IP settings
   user                 = var.vsphere_user
   password             = var.vsphere_password
   vsphere_server       = var.vsphere_server
@@ -73,16 +74,13 @@ resource "vsphere_virtual_machine" "vm" {
     adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
   }
 
-  # Interface 2: AD Network (Para configuração de IP fixo via Ansible)
+  # Interface 2: AD Network (Configuração de IP fixo via Ansible) - CORREÇÃO APLICADA
   network_interface {
-    network_id   = data.vsphere_network.network_ad.id
-    adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
-
-    # Configuração de IP estático
-    ip_address         = var.ad_network_prefix[count.index + var.static_ip_start]
-    subnet_mask        = "255.255.255.0"
-    default_gateway    = var.ad_gateway
-    dns_server_list    = [var.ad_dns_primary]
+    network_id   = data.vsphere_network.network_ad.id  # CORREÇÃO: Usar data.id em vez de var.network_id
+    ip_address   = var.ad_network_prefix[count.index + var.static_ip_start]
+    subnet_mask  = "255.255.255.0"
+    gateway      = var.ad_gateway
+    dns_servers  = [var.ad_dns_primary]
   }
 
   # Disk 0: OS Drive (C:\) - Alocado no datastore primário do SO
