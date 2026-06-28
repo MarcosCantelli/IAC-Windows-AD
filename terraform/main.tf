@@ -59,14 +59,11 @@ resource "vsphere_virtual_machine" "vm" {
   wait_for_guest_net_timeout = 10
 
   network_interface {
-    network_id = data.vsphere_network.vlan_ad.id
+    network_id = data.vsphere_network.vm_network.id
+  }
 
-    ipv4_address = cidrhost(
-        var.ad_network,
-        var.ip_offset + count.index
-    )
-
-    ipv4_prefix_length = var.ad_prefix_length
+  network_interface {
+    network_id = data.vsphere_network.ad_network.id
   }
 
   disk {

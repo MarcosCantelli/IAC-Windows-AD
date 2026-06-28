@@ -126,3 +126,9 @@ variable "ad_dns_primary" {
   type = string
   default = "172.16.0.254"
 }
+
+variable "ad_network_cidr" {
+  description = "Rede AD"
+  type = string
+  default = "172.16.0.0/24"
+}
