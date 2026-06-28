@@ -164,14 +164,18 @@ pipeline {
 
                                         sh '''
                                             ansible-playbook \
-                                              -i inventory/hosts.yml \
-                                              playbooks/configure-vm.yml \
-                                              --tags base \
-                                              -e "target_ip=$TARGET_IP" \
-                                              -e "ansible_user=$WIN_USER" \
-                                              -e "ansible_password=$WIN_PASS" \
-                                              -e "static_ip=$STATIC_IP" \
-                                              -e "domain_password=$AD_PASS"
+                                                -i inventory/hosts.yml \
+                                                playbooks/configure-vm.yml \
+                                                --tags base \
+                                                -e "target_ip=$TARGET_IP" \
+                                                -e "ansible_user=$windows-admin-local" \
+                                                -e "ansible_password=$windows-admin-local" \
+                                                -e "static_ip=$STATIC_IP" \
+                                                -e "ad_prefix_length=24" \
+                                                -e "ad_gateway=172.16.0.254" \
+                                                -e "ad_dns_primary=172.16.0.254" \
+                                                -e "company_domain=mvrc.local" \
+                                                -e "domain_password=$ansible-ad-password"
                                         '''
                                     }
                                 }
