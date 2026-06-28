@@ -210,12 +210,12 @@
 # AGUARDAR REBOOT DOMAIN JOIN
 #########################################################################
 
-- name: Aguardar retorno WinRM pós-domain
-  ansible.windows.win_ping:
-  register: winrm_result
-  until: winrm_result is success
-  retries: 30
-  delay: 20
+#- name: Aguardar retorno WinRM pós-domain
+#  ansible.windows.win_ping:
+#  register: winrm_result
+#  until: winrm_result is success
+#  retries: 30
+#  delay: 20
 
 #########################################################################
 # DESATIVAR NIC DHCP SOMENTE NO FINAL
