@@ -1,0 +1,121 @@
+---
+#########################################################################
+# PRÉ-REQUISITOS
+# Cada checagem falha com a causa provável, em vez do erro genérico do
+# join ("não foi possível contatar um controlador de domínio").
+#########################################################################
+
+- name: Conferir senha da conta de ingresso
+  ansible.builtin.assert:
+    that:
+      - domain_join_password | length > 0
+    fail_msg: >-
+      AD_JOIN_PASSWORD vazia. No Jenkins vem da credencial ansible-ad-password;
+      na sua máquina, exporte AD_JOIN_PASSWORD antes de rodar.
+    quiet: true
+
+- name: Testar portas do controlador de domínio (DNS, Kerberos, LDAP, SMB)
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Dc, [int[]]$Ports)
+      $Ansible.Changed = $false
+      $fail = foreach ($p in $Ports) {
+        $ok = Test-NetConnection -ComputerName $Dc -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue
+        if (-not $ok) { $p }
+      }
+      if ($fail) {
+        throw "DC $Dc não respondeu nas portas: $($fail -join ', '). Confira a VLAN_AD (vNIC profile / VLAN tag no host) e o firewall do DC."
+      }
+    parameters:
+      Dc: "{{ ad_dc_ip }}"
+      Ports: [53, 88, 389, 445]
+  register: dc_ports
+  retries: 4
+  delay: 15
+  until: dc_ports is succeeded
+
+- name: Localizar o DC pelo DNS (registro SRV do domínio)
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Domain)
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      Clear-DnsClientCache
+      try {
+        $srv = Resolve-DnsName -Name "_ldap._tcp.dc._msdcs.$Domain" -Type SRV -DnsOnly
+      } catch {
+        throw "O Windows não encontrou o SRV _ldap._tcp.dc._msdcs.$Domain com o DNS configurado: $($_.Exception.Message)"
+      }
+      @($srv | Where-Object { $_.Type -eq 'SRV' } | ForEach-Object { $_.NameTarget })
+    parameters:
+      Domain: "{{ company_domain }}"
+  register: dc_srv
+  retries: 4
+  delay: 15
+  until: dc_srv is succeeded
+
+- name: Mostrar controladores encontrados
+  ansible.builtin.debug:
+    msg: "DCs de {{ company_domain }}: {{ dc_srv.output | join(', ') }}"
+
+#########################################################################
+# INGRESSO NO DOMÍNIO
+# O reboot é feito pelo próprio módulo, que reconecta pelo mesmo IP de
+# provisionamento (a placa só é desativada na finalize).
+#########################################################################
+
+- name: Ingressar VM no domínio
+  microsoft.ad.membership:
+    dns_domain_name: "{{ company_domain }}"
+    hostname: "{{ vm_hostname }}"
+    domain_admin_user: "{{ domain_join_user }}"
+    domain_admin_password: "{{ domain_join_password }}"
+    domain_ou_path: "{{ ad_ou_path | default(omit, true) }}"
+    state: domain
+    reboot: true
+    reboot_timeout: 900
+  register: domain_join
+
+#########################################################################
+# PÓS-JOIN
+#########################################################################
+
+- name: Sincronizar relógio com a hierarquia do domínio
+  ansible.windows.win_shell: |
+    w32tm /config /syncfromflags:domhier /update
+    Restart-Service w32time
+    w32tm /resync /force
+  changed_when: false
+  failed_when: false
+
+- name: Registrar o IP da VLAN_AD no DNS do AD
+  ansible.windows.win_shell: ipconfig /registerdns
+  changed_when: false
+
+#########################################################################
+# VALIDAÇÃO
+#########################################################################
+
+- name: Validar ingresso no domínio
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Domain)
+      $Ansible.Changed = $false
+      $cs = Get-CimInstance Win32_ComputerSystem
+      if (-not $cs.PartOfDomain -or $cs.Domain -ne $Domain) {
+        throw "A VM não está no domínio $Domain (domínio atual: $($cs.Domain))."
+      }
+      $secure = $null
+      try { $secure = Test-ComputerSecureChannel -ErrorAction Stop } catch { $secure = "não testado: $($_.Exception.Message)" }
+      [PSCustomObject]@{
+        Hostname      = $env:COMPUTERNAME
+        Dominio       = $cs.Domain
+        CanalSeguro   = "$secure"
+      }
+    parameters:
+      Domain: "{{ company_domain }}"
+  register: domain_validation
+
+- name: Exibir resultado do ingresso
+  ansible.builtin.debug:
+    var: domain_validation.output[0]

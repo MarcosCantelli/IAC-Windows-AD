@@ -3,262 +3,213 @@
 # HOSTNAME
 #########################################################################
 
-- name: Definir hostname único
+- name: Validar hostname (NetBIOS aceita no máximo 15 caracteres)
+  ansible.builtin.assert:
+    that:
+      - static_ip is defined
+      - vm_hostname | length <= 15
+    fail_msg: "Hostname '{{ vm_hostname | default('') }}' inválido ou static_ip ausente no inventário."
+    quiet: true
+
+- name: Definir hostname
   ansible.windows.win_hostname:
-    name: "VDI-W11-{{ static_ip.split('.')[-1] }}"
+    name: "{{ vm_hostname }}"
   register: hostname_change
 
-- name: Reiniciar após alteração hostname
+- name: Reiniciar após alteração do hostname
   ansible.windows.win_reboot:
-    reboot_timeout: 600
+    reboot_timeout: 900
   when: hostname_change.reboot_required
 
 #########################################################################
-# DESCOBRIR NIC DHCP
+# PLACAS
 #########################################################################
 
-- name: Descobrir interface DHCP ativa
-  ansible.windows.win_shell: |
-    Get-NetIPConfiguration |
-    Where-Object {
-      $_.IPv4DefaultGateway -ne $null -and
-      $_.NetAdapter.Status -eq "Up"
-    } |
-    Select-Object -First 1 -ExpandProperty InterfaceAlias
-  register: dhcp_adapter
+- name: Descobrir placas
+  ansible.builtin.include_tasks: discover.yml
 
-- name: Normalizar interface DHCP
-  set_fact:
-    dhcp_interface_name: "{{ dhcp_adapter.stdout | trim }}"
-
-- name: Mostrar interface DHCP
-  debug:
-    msg: "{{ dhcp_interface_name }}"
+- name: Garantir que a placa da VLAN_AD está conectada
+  ansible.builtin.assert:
+    that:
+      - ad_interface_status == 'Up'
+    fail_msg: >-
+      A placa {{ ad_interface }} está '{{ ad_interface_status }}'. Confira no
+      OLVM se a nic2 está plugada e com link no vNIC profile da VLAN_AD.
+    quiet: true
 
 #########################################################################
-# DESCOBRIR NIC AD
+# VLAN_AD: IP FIXO, GATEWAY E DNS DO AD
+# Métrica 50 enquanto a placa de provisionamento existir: a saída para a
+# internet (Chocolatey) continua pelo gateway da 192.168.31.x. A finalize
+# volta a métrica para automática quando desativa a outra placa.
 #########################################################################
 
-- name: Descobrir interface AD
-  ansible.windows.win_shell: |
-    Get-NetAdapter |
-    Where-Object {
-      $_.Status -eq "Up" -and
-      $_.Name -ne "{{ dhcp_interface_name }}"
-    } |
-    Select-Object -First 1 -ExpandProperty Name
-  register: ad_adapter
+- name: Configurar IP fixo na placa da VLAN_AD
+  ansible.windows.win_powershell:
+    script: |
+      param(
+        [string]$Alias, [string]$Ip, [int]$Prefix, [string]$Gateway,
+        [string[]]$Dns, [string]$Suffix, [int]$Metric
+      )
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
 
-- name: Normalizar interface AD
-  set_fact:
-    ad_interface_real: "{{ ad_adapter.stdout | trim }}"
+      $ips = @(Get-NetIPAddress -InterfaceAlias $Alias -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+      $routes = @(Get-NetRoute -InterfaceAlias $Alias -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)
+      $dhcp = (Get-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4).Dhcp
 
-- name: Mostrar interface AD
-  debug:
-    msg: "{{ ad_interface_real }}"
+      $ipOk = ($ips.Count -eq 1) -and ($ips[0].IPAddress -eq $Ip) -and ($ips[0].PrefixLength -eq $Prefix)
+      $gwOk = ($routes.Count -eq 1) -and ($routes[0].NextHop -eq $Gateway)
 
-#########################################################################
-# CONFIGURAR NIC AD
-#########################################################################
+      if (-not ($ipOk -and $gwOk -and $dhcp -eq 'Disabled')) {
+        Set-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4 -Dhcp Disabled
+        $ips | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+        $routes | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+        New-NetIPAddress -InterfaceAlias $Alias -IPAddress $Ip -PrefixLength $Prefix -DefaultGateway $Gateway | Out-Null
+        $Ansible.Changed = $true
+      }
 
-- name: Configurar IP estático na NIC AD
-  ansible.windows.win_shell: |
+      if ((Get-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4).InterfaceMetric -ne $Metric) {
+        Set-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4 -InterfaceMetric $Metric
+        $Ansible.Changed = $true
+      }
 
-    $iface = "{{ ad_interface_real }}"
+      $dnsNow = (Get-DnsClientServerAddress -InterfaceAlias $Alias -AddressFamily IPv4).ServerAddresses
+      if ((@($dnsNow) -join ',') -ne ($Dns -join ',')) {
+        Set-DnsClientServerAddress -InterfaceAlias $Alias -ServerAddresses $Dns
+        $Ansible.Changed = $true
+      }
 
-    # Remove IPs antigos
-    Get-NetIPAddress `
-      -InterfaceAlias $iface `
-      -AddressFamily IPv4 `
-      -ErrorAction SilentlyContinue |
-      Remove-NetIPAddress `
-        -Confirm:$false `
-        -ErrorAction SilentlyContinue
-
-    # Remove gateways antigos
-    Get-NetRoute `
-      -InterfaceAlias $iface `
-      -ErrorAction SilentlyContinue |
-      Remove-NetRoute `
-        -Confirm:$false `
-        -ErrorAction SilentlyContinue
-
-    # Configura IP
-    New-NetIPAddress `
-      -InterfaceAlias $iface `
-      -IPAddress "{{ static_ip }}" `
-      -PrefixLength {{ ad_prefix_length }} `
-      -DefaultGateway "{{ ad_gateway }}"
-
-    # Configura DNS AD
-    Set-DnsClientServerAddress `
-      -InterfaceAlias $iface `
-      -ServerAddresses ("{{ ad_dns_primary }}")
-
-    # Define sufixo DNS
-    Set-DnsClient `
-      -InterfaceAlias $iface `
-      -ConnectionSpecificSuffix "{{ company_domain }}"
-
-    # Limpa cache
-    Clear-DnsClientCache
+      $client = Get-DnsClient -InterfaceAlias $Alias
+      if ($client.ConnectionSpecificSuffix -ne $Suffix -or -not $client.RegisterThisConnectionsAddress) {
+        Set-DnsClient -InterfaceAlias $Alias -ConnectionSpecificSuffix $Suffix -RegisterThisConnectionsAddress $true
+        $Ansible.Changed = $true
+      }
+    parameters:
+      Alias: "{{ ad_interface }}"
+      Ip: "{{ static_ip }}"
+      Prefix: "{{ ad_prefix_length | int }}"
+      Gateway: "{{ ad_gateway }}"
+      Dns: ["{{ ad_dns_primary }}"]
+      Suffix: "{{ company_domain }}"
+      Metric: 50
 
 #########################################################################
-# GARANTIR PERFIL PRIVATE
+# PLACA DE PROVISIONAMENTO: DNS DO AD
+# Era a causa provável do join falhar: esta placa ficava com o DNS da
+# rede 192.168.31.x (BIND9, que também responde por mvrc.local). Com
+# métrica menor, o Windows perguntava a ele pelo _ldap._tcp.dc._msdcs,
+# recebia NXDOMAIN e não achava o DC. O DNS do AD é alcançado pela rota
+# direta da VLAN_AD, mesmo listado nesta placa. Também não registra o IP
+# 192.168.31.x no DNS do AD (ninguém na VLAN_AD alcança esse IP).
 #########################################################################
 
-- name: Definir perfil de rede como Private
-  ansible.windows.win_shell: |
-    Get-NetConnectionProfile |
-    Set-NetConnectionProfile -NetworkCategory Private
+- name: Apontar DNS da placa de provisionamento para o AD
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Alias, [string[]]$Dns, [int]$Metric)
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+
+      $dnsNow = (Get-DnsClientServerAddress -InterfaceAlias $Alias -AddressFamily IPv4).ServerAddresses
+      if ((@($dnsNow) -join ',') -ne ($Dns -join ',')) {
+        Set-DnsClientServerAddress -InterfaceAlias $Alias -ServerAddresses $Dns
+        $Ansible.Changed = $true
+      }
+
+      if ((Get-DnsClient -InterfaceAlias $Alias).RegisterThisConnectionsAddress) {
+        Set-DnsClient -InterfaceAlias $Alias -RegisterThisConnectionsAddress $false
+        $Ansible.Changed = $true
+      }
+
+      if ((Get-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4).InterfaceMetric -ne $Metric) {
+        Set-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4 -InterfaceMetric $Metric
+        $Ansible.Changed = $true
+      }
+
+      Clear-DnsClientCache
+    parameters:
+      Alias: "{{ provisioning_interface }}"
+      Dns: ["{{ ad_dns_primary }}"]
+      Metric: 10
 
 #########################################################################
-# GARANTIR WINRM
+# PERFIL DE REDE
+# Só mexe nos perfis Public: depois do join a VLAN_AD vira
+# DomainAuthenticated e o Set-NetConnectionProfile daria erro.
 #########################################################################
 
-- name: Habilitar PS Remoting
-  ansible.windows.win_shell: |
-    Enable-PSRemoting -Force
+- name: Trocar perfis de rede Public para Private
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public' | ForEach-Object {
+        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private
+        $Ansible.Changed = $true
+      }
 
-- name: Garantir serviço WinRM iniciado
+#########################################################################
+# WINRM
+# Regra liberada nos três perfis: depois do join a VLAN_AD passa a ser
+# perfil Domain, que a regra do template pode não cobrir.
+#########################################################################
+
+- name: Liberar WinRM HTTPS 5986 no firewall (todos os perfis)
+  community.windows.win_firewall_rule:
+    name: WinRM HTTPS 5986
+    localport: 5986
+    action: allow
+    direction: in
+    protocol: tcp
+    profiles: [domain, private, public]
+    state: present
+    enabled: true
+
+- name: Garantir serviço WinRM automático
   ansible.windows.win_service:
     name: WinRM
     start_mode: auto
     state: started
 
-- name: Abrir firewall WinRM HTTPS 5986
-  ansible.windows.win_shell: |
-    netsh advfirewall firewall add rule `
-      name="WinRM HTTPS 5986" `
-      dir=in `
-      action=allow `
-      protocol=TCP `
-      localport=5986
-  ignore_errors: true
-
-- name: Validar listener WinRM
-  ansible.windows.win_shell: |
-    winrm enumerate winrm/config/listener
-  register: winrm_listener
-
-- name: Exibir listener WinRM
-  debug:
-    var: winrm_listener.stdout
-
 #########################################################################
-# AGUARDAR REDE
+# RELÓGIO
+# O Kerberos recusa o join com mais de 5 minutos de diferença para o DC.
+# No OLVM, template com os_type "other" sobe com o relógio em UTC e o
+# Windows lê como hora local (3 horas de diferença). Acerta pela hora do
+# controlador (Jenkins); depois do join a role ad_join passa a sincronizar
+# com o domínio.
 #########################################################################
 
-- name: Aguardar rede estabilizar
-  pause:
-    seconds: 20
+- name: Acertar o relógio pela hora do controlador
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$UtcNow)
+      $Ansible.Changed = $false
+      $ref = [DateTime]::Parse($UtcNow, [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AdjustToUniversal)
+      $skew = [Math]::Round(((Get-Date).ToUniversalTime() - $ref).TotalSeconds)
+      if ([Math]::Abs($skew) -gt 60) {
+        Set-Date -Date $ref.ToLocalTime() | Out-Null
+        $Ansible.Changed = $true
+      }
+      [PSCustomObject]@{ DiferencaSegundos = $skew }
+    parameters:
+      UtcNow: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+  register: clock_result
+
+- name: Mostrar diferença de relógio encontrada
+  ansible.builtin.debug:
+    msg: "Diferença para o controlador: {{ clock_result.output[0].DiferencaSegundos }}s"
 
 #########################################################################
-# VALIDAR DNS
+# CONFIGURAÇÃO FINAL
 #########################################################################
 
-- name: Validar resolução do domínio
-  ansible.windows.win_shell: |
-    Resolve-DnsName {{ company_domain }}
-  register: dns_test
-
-- name: Exibir resultado DNS
-  debug:
-    var: dns_test.stdout
-
-#########################################################################
-# VALIDAR DOMAIN CONTROLLER
-#########################################################################
-
-- name: Testar comunicação com Domain Controller
-  ansible.windows.win_shell: |
-    Test-NetConnection {{ ad_dns_primary }} -Port 53
-  register: dc_test
-
-- name: Exibir teste DC
-  debug:
-    var: dc_test.stdout
-
-#########################################################################
-# VALIDAR LDAP
-#########################################################################
-
-- name: Testar LDAP
-  ansible.windows.win_shell: |
-    Test-NetConnection {{ ad_dns_primary }} -Port 389
-  register: ldap_test
-
-- name: Exibir teste LDAP
-  debug:
-    var: ldap_test.stdout
-
-#########################################################################
-# DOMAIN JOIN
-#########################################################################
-
-- name: Ingressar VM no domínio
-  microsoft.ad.membership:
-    dns_domain_name: "{{ company_domain }}"
-    hostname: "VDI-W11-{{ static_ip.split('.')[-1] }}"
-    domain_admin_user: "ansible@{{ company_domain }}"
-    domain_admin_password: "{{ domain_password }}"
-    state: domain
-    reboot: true
-  register: domain_join
-
-#########################################################################
-# AGUARDAR REBOOT DOMAIN JOIN
-#########################################################################
-
-#- name: Aguardar retorno WinRM pós-domain
-#  ansible.windows.win_ping:
-#  register: winrm_result
-#  until: winrm_result is success
-#  retries: 30
-#  delay: 20
-
-#########################################################################
-# DESATIVAR NIC DHCP SOMENTE NO FINAL
-#########################################################################
-
-- name: Desativar NIC DHCP antiga
-  ansible.windows.win_shell: |
-    Disable-NetAdapter `
-      -Name "{{ dhcp_interface_name }}" `
-      -Confirm:$false
-  ignore_errors: true
-
-#########################################################################
-# RESTART FINAL REDE
-#########################################################################
-
-- name: Reiniciar adaptador AD
-  ansible.windows.win_shell: |
-    Restart-NetAdapter -Name "{{ ad_interface_real }}"
-  ignore_errors: true
-
-#########################################################################
-# VALIDAR IP FINAL
-#########################################################################
-
-- name: Exibir configuração final
-  ansible.windows.win_shell: |
-    ipconfig /all
+- name: Coletar configuração IP
+  ansible.windows.win_shell: ipconfig /all
   register: final_ipconfig
+  changed_when: false
 
-- name: Exibir ipconfig final
-  debug:
-    var: final_ipconfig.stdout
-
-#########################################################################
-# VALIDAR DOMÍNIO
-#########################################################################
-
-- name: Validar ingresso no domínio
-  ansible.windows.win_shell: |
-    (Get-WmiObject Win32_ComputerSystem).Domain
-  register: domain_validation
-
-- name: Exibir domínio final
-  debug:
-    var: domain_validation.stdout
+- name: Exibir ipconfig
+  ansible.builtin.debug:
+    var: final_ipconfig.stdout_lines

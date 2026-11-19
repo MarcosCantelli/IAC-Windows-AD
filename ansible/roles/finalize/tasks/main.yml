@@ -1,0 +1,52 @@
+---
+#########################################################################
+# FINALIZE
+# Deixa a VM só na VLAN_AD: desativa a placa de provisionamento.
+# Depois disto o Jenkins não alcança mais a VM (o WinRM era por ela).
+#########################################################################
+
+- name: Confirmar que a VM está no domínio antes de isolá-la
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Domain)
+      $Ansible.Changed = $false
+      $cs = Get-CimInstance Win32_ComputerSystem
+      if (-not $cs.PartOfDomain -or $cs.Domain -ne $Domain) {
+        throw "A VM não está no domínio $Domain. Não vou desativar a placa de provisionamento (a VM ficaria inacessível)."
+      }
+    parameters:
+      Domain: "{{ company_domain }}"
+
+- name: Descobrir placas
+  ansible.builtin.include_role:
+    name: network
+    tasks_from: discover
+
+- name: Voltar a métrica da VLAN_AD para automática (vira a única rota padrão)
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Alias)
+      $Ansible.Changed = $false
+      $iface = Get-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4
+      if ($iface.AutomaticMetric -ne 'Enabled') {
+        Set-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4 -AutomaticMetric Enabled
+        $Ansible.Changed = $true
+      }
+    parameters:
+      Alias: "{{ ad_interface }}"
+
+- name: Resumo final
+  ansible.builtin.debug:
+    msg:
+      - "Hostname: {{ vm_hostname }}.{{ company_domain }}"
+      - "IP VLAN_AD: {{ static_ip }} ({{ ad_interface }})"
+      - "Desativando {{ provisioning_interface }} ({{ ansible_host }}) em 10 segundos"
+
+# Em segundo plano (async + poll 0): a conexão WinRM cai junto com a placa,
+# então o Ansible não pode esperar o fim do comando.
+- name: Desativar placa de provisionamento
+  ansible.windows.win_shell: |
+    Start-Sleep -Seconds 10
+    Disable-NetAdapter -Name '{{ provisioning_interface }}' -Confirm:$false
+  async: 120
+  poll: 0
