@@ -1,0 +1,28 @@
+---
+#########################################################################
+# CONEXÃO WINRM (HTTPS 5986, habilitado no template)
+# Usuário e senha do admin local vêm do ambiente - no Jenkins, da
+# credencial windows-admin-local (WIN_ADMIN_USR / WIN_ADMIN_PSW).
+#########################################################################
+
+ansible_connection: winrm
+ansible_port: 5986
+ansible_winrm_scheme: https
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+# Instalações do Chocolatey (Visual Studio) passam fácil de 1 minuto.
+ansible_winrm_operation_timeout_sec: 120
+ansible_winrm_read_timeout_sec: 150
+
+ansible_user: "{{ lookup('ansible.builtin.env', 'WIN_ADMIN_USR') }}"
+ansible_password: "{{ lookup('ansible.builtin.env', 'WIN_ADMIN_PSW') }}"
+
+#########################################################################
+# PROGRAMAS
+#########################################################################
+
+programs_root: "D:\\Programas"
+
+java_version: "21"
+node_version: "20.19.5"
+python_version: "3.12.3"

@@ -1,0 +1,15 @@
+---
+# Coleções usadas pelas roles Windows.
+# Instalar com: ansible-galaxy collection install -r requirements.yml
+# No controlador (Jenkins) também é preciso o pywinrm: pip install pywinrm
+collections:
+  - name: ansible.windows
+    version: ">=2.3.0"
+  - name: community.windows
+    version: ">=2.2.0"
+  # microsoft.ad.membership: ingresso no domínio (substitui o antigo
+  # community.windows.win_domain_membership)
+  - name: microsoft.ad
+    version: ">=1.5.0"
+  - name: chocolatey.chocolatey
+    version: ">=1.5.0"

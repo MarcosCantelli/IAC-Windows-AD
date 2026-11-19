@@ -1,0 +1,34 @@
+---
+#########################################################################
+# REDE AD (VLAN_AD)
+# static_ip e ad_prefix_length vêm do inventário (output do Terraform).
+#########################################################################
+
+ad_gateway: "172.16.0.254"
+ad_dns_primary: "172.16.0.254"
+
+# IP do controlador de domínio usado nos testes de porta (DNS, Kerberos,
+# LDAP, SMB) antes do join. No lab o DC é o próprio DNS/gateway.
+ad_dc_ip: "{{ ad_dns_primary }}"
+
+#########################################################################
+# DOMINIO
+#########################################################################
+
+company_domain: "mvrc.local"
+
+# Conta com permissão de ingressar máquinas no domínio. A senha vem da
+# variável de ambiente AD_JOIN_PASSWORD (credencial ansible-ad-password).
+domain_join_user: "ansible@{{ company_domain }}"
+domain_join_password: "{{ lookup('ansible.builtin.env', 'AD_JOIN_PASSWORD') }}"
+
+# OU de destino (ex: "OU=VDI,DC=mvrc,DC=local"). Vazio = Computers.
+ad_ou_path: ""
+
+#########################################################################
+# HOSTNAME
+# VDI-W11-50 para 172.16.0.50. NetBIOS: no máximo 15 caracteres.
+#########################################################################
+
+hostname_prefix: "VDI-W11"
+vm_hostname: "{{ hostname_prefix }}-{{ static_ip.split('.')[-1] }}"

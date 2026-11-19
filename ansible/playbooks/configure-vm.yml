@@ -1,7 +1,34 @@
 ---
+# Tags:
+#   base     -> base + rede + ingresso no AD (o que a pipeline roda primeiro)
+#   ad       -> só rede + ingresso no AD (para refazer o join à mão)
+#   dev      -> Python, Java, NodeJS, DevTools
+#   finalize -> confere o domínio e desativa a placa de provisionamento
 - name: Configurar VM Windows
-  hosts: windows_vm
-  gather_facts: true
+  hosts: windows
+  gather_facts: false
+
+  pre_tasks:
+
+    - name: Conferir credenciais no ambiente
+      ansible.builtin.assert:
+        that:
+          - ansible_user | length > 0
+          - ansible_password | length > 0
+        fail_msg: >-
+          WIN_ADMIN_USR / WIN_ADMIN_PSW vazias. No Jenkins vêm da credencial
+          windows-admin-local; na sua máquina, exporte as duas antes de rodar.
+        quiet: true
+      tags: [always]
+
+    - name: Aguardar WinRM responder
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+      tags: [always]
+
+    - name: Coletar facts
+      ansible.builtin.setup:
+      tags: [always]
 
   tasks:
 
@@ -13,19 +40,26 @@
       ansible.builtin.include_role:
         name: base
         apply:
-          tags:
-            - base
-      tags:
-        - base
+          tags: [base]
+      tags: [base]
+
+    #####################################################################
+    # REDE + ACTIVE DIRECTORY
+    #####################################################################
 
     - name: Executar role NETWORK
       ansible.builtin.include_role:
         name: network
         apply:
-          tags:
-            - base
-      tags:
-        - base
+          tags: [base, ad]
+      tags: [base, ad]
+
+    - name: Executar role AD_JOIN
+      ansible.builtin.include_role:
+        name: ad_join
+        apply:
+          tags: [base, ad]
+      tags: [base, ad]
 
     #####################################################################
     # DEV
@@ -35,37 +69,29 @@
       ansible.builtin.include_role:
         name: python
         apply:
-          tags:
-            - dev
-      tags:
-        - dev
+          tags: [dev]
+      tags: [dev]
 
     - name: Executar role JAVA
       ansible.builtin.include_role:
         name: java
         apply:
-          tags:
-            - dev
-      tags:
-        - dev
+          tags: [dev]
+      tags: [dev]
 
     - name: Executar role NODEJS
       ansible.builtin.include_role:
         name: nodejs
         apply:
-          tags:
-            - dev
-      tags:
-        - dev
+          tags: [dev]
+      tags: [dev]
 
     - name: Executar role DEVTOOLS
       ansible.builtin.include_role:
         name: devtools
         apply:
-          tags:
-            - dev
-      tags:
-        - dev
+          tags: [dev]
+      tags: [dev]
 
     #####################################################################
     # FINALIZE
@@ -75,7 +101,5 @@
       ansible.builtin.include_role:
         name: finalize
         apply:
-          tags:
-            - finalize
-      tags:
-        - finalize
+          tags: [finalize]
+      tags: [finalize]

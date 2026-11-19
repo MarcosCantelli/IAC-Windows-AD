@@ -1,0 +1,48 @@
+---
+#########################################################################
+# DESCOBRIR AS PLACAS
+# Usada pela própria role e pela finalize (tasks_from: discover).
+#
+# Provisionamento = a placa que tem o IP pelo qual o Ansible está
+# conectado (ansible_host). Não dá para usar "a que tem gateway": se a
+# VLAN_AD também entregar DHCP com gateway, as duas teriam.
+#########################################################################
+
+- name: Descobrir placa de provisionamento (IP usado pelo WinRM)
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Ip)
+      $Ansible.Changed = $false
+      (Get-NetIPAddress -AddressFamily IPv4 -IPAddress $Ip -ErrorAction Stop).InterfaceAlias
+    parameters:
+      Ip: "{{ ansible_host }}"
+  register: provisioning_nic_result
+
+- name: Descobrir placa da VLAN_AD (a outra placa física)
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$ProvisioningAlias)
+      $Ansible.Changed = $false
+      $nic = Get-NetAdapter -Physical |
+        Where-Object { $_.Name -ne $ProvisioningAlias } |
+        Sort-Object ifIndex |
+        Select-Object -First 1
+      if (-not $nic) {
+        throw "Só existe a placa '$ProvisioningAlias'. Confira a nic2 (ad_vnic_profile_id) no OLVM e o driver NetKVM (virtio-win) no template."
+      }
+      [PSCustomObject]@{ Name = $nic.Name; Status = [string]$nic.Status; Mac = $nic.MacAddress }
+    parameters:
+      ProvisioningAlias: "{{ provisioning_nic_result.output[0] }}"
+  register: ad_nic_result
+
+- name: Registrar nomes das placas
+  ansible.builtin.set_fact:
+    provisioning_interface: "{{ provisioning_nic_result.output[0] }}"
+    ad_interface: "{{ ad_nic_result.output[0].Name }}"
+    ad_interface_status: "{{ ad_nic_result.output[0].Status }}"
+
+- name: Mostrar placas
+  ansible.builtin.debug:
+    msg:
+      - "Provisionamento: {{ provisioning_interface }} ({{ ansible_host }})"
+      - "VLAN_AD: {{ ad_interface }} [{{ ad_interface_status }}] MAC {{ ad_nic_result.output[0].Mac }}"

@@ -1,53 +1,45 @@
 ---
 #########################################################################
 # DISCO D:
+# No OLVM toda VM tem um drive de CD, e o Windows costuma dar o D: para
+# ele. A numeração dos discos também depende do controlador (SATA x
+# VirtIO-SCSI), então o disco de programas é achado por ser o RAW, não
+# pelo número 1.
 #########################################################################
 
-- name: Garantir que o segundo disco esteja online
+- name: Liberar a letra D (move o drive de CD para Z)
   ansible.windows.win_powershell:
     script: |
-      $disk = Get-Disk -Number 1 -ErrorAction SilentlyContinue
-
-      if ($disk) {
-          Set-Disk -Number 1 -IsOffline $false
-          Set-Disk -Number 1 -IsReadOnly $false
+      $Ansible.Changed = $false
+      $cd = Get-CimInstance Win32_Volume -Filter "DriveLetter = 'D:' AND DriveType = 5"
+      if ($cd) {
+        Set-CimInstance -InputObject $cd -Property @{ DriveLetter = 'Z:' }
+        $Ansible.Changed = $true
       }
-  ignore_errors: true
 
-#########################################################################
-# VALIDAR SE D: JA EXISTE
-#########################################################################
+- name: Criar o D (Programas) no disco vazio
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      if (Get-Volume -DriveLetter D -ErrorAction SilentlyContinue) { return }
 
-- name: Verificar se o drive D ja existe
-  ansible.windows.win_shell: |
-    Get-PSDrive -Name D -ErrorAction SilentlyContinue
-  register: drive_d_exists
-  changed_when: false
-  failed_when: false
+      $disk = Get-Disk |
+        Where-Object { $_.PartitionStyle -eq 'RAW' -and -not $_.IsBoot -and -not $_.IsSystem } |
+        Sort-Object Number |
+        Select-Object -First 1
+      if (-not $disk) {
+        throw 'Nenhum disco vazio para virar D:. Confira data_disk_enabled no Terraform e o driver vioscsi (virtio-win) no template.'
+      }
 
-#########################################################################
-# CRIAR PARTICAO SOMENTE SE NECESSARIO
-#########################################################################
+      if ($disk.IsOffline) { Set-Disk -Number $disk.Number -IsOffline $false }
+      if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false }
 
-- name: "Criar partição D ocupando todo o disco"
-  community.windows.win_partition:
-    drive_letter: D
-    disk_number: 1
-    partition_size: -1
-    state: present
-  when: drive_d_exists.stdout == ""
-
-#########################################################################
-# FORMATAR SOMENTE SE NECESSARIO
-#########################################################################
-
-- name: "Formatar drive D como NTFS"
-  community.windows.win_format:
-    drive_letter: D
-    file_system: NTFS
-    new_label: Programas
-    state: present
-  when: drive_d_exists.stdout == ""
+      Initialize-Disk -Number $disk.Number -PartitionStyle GPT
+      New-Partition -DiskNumber $disk.Number -UseMaximumSize -DriveLetter D |
+        Format-Volume -FileSystem NTFS -NewFileSystemLabel 'Programas' -Confirm:$false |
+        Out-Null
+      $Ansible.Changed = $true
 
 #########################################################################
 # DIRETORIOS
